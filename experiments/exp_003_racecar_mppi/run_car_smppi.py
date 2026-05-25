@@ -13,7 +13,7 @@ import jax.numpy as jnp
 
 
 def run_mpc(scenario, reverse=False):
-    speeds, slip_angles_f, slip_angles_r, yaw_rates = [], [], [], []
+    # speeds, slip_angles_f, slip_angles_r, yaw_rates = [], [], [], []
 
     env = RecordVideo(
         gym.make(
@@ -42,9 +42,9 @@ def run_mpc(scenario, reverse=False):
         None,
         cost,
         bound,
-        jnp.diag(jnp.array([0.07295566355713852, 0.5144608534445827])), # 0.25, 0.75
-        jnp.diag(jnp.array([0.808100859804515, 0.252776719632798])),
-        inverse_temp=6.597652872970505,
+        jnp.diag(jnp.array([0.5, 1])), # 0.25, 0.75
+        jnp.diag(jnp.array([1e-1, 1e-2])),
+        inverse_temp=1,
         K=350,
         gamma=0.1,
         step=0.05,
@@ -79,8 +79,8 @@ def run_mpc(scenario, reverse=False):
             )
 
             # Benchmarking
-            speeds.append(jnp.hypot(state.vx, state.vy))
-            yaw_rates.append(state.yaw_rate)
+            # speeds.append(jnp.hypot(state.vx, state.vy))
+            # yaw_rates.append(state.yaw_rate)
 
             vx_safe = jnp.maximum(jnp.abs(state.vx), 0.5)
             steer_angle = state.steer * params[1].vehicle.max_steer_rad
@@ -89,8 +89,8 @@ def run_mpc(scenario, reverse=False):
             )
             alpha_r = -jnp.arctan2(state.vy - params[1].vehicle.lr * state.yaw_rate, vx_safe)
 
-            slip_angles_f.append(alpha_f)
-            slip_angles_r.append(alpha_r)
+            # slip_angles_f.append(alpha_f)
+            # slip_angles_r.append(alpha_r)
 
             action = jnp.array([u[0], jnp.maximum(u[1], 0), -jnp.minimum(u[1], 0)])
             observation, reward, terminated, truncated, info = env.step(action)
@@ -108,9 +108,9 @@ def run_mpc(scenario, reverse=False):
     env.close()
 
     cutoff = 100
-    print(
-        f"Reverse: {reverse}, Avg speed: {jnp.mean(jnp.array(speeds[cutoff:]))}, Avg alpha_f: {jnp.mean(jnp.array(slip_angles_f[cutoff:]))}, Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
-    )
+    # print(
+    #     f"Reverse: {reverse}, Avg speed: {jnp.mean(jnp.array(speeds[cutoff:]))}, Avg alpha_f: {jnp.mean(jnp.array(slip_angles_f[cutoff:]))}, Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
+    # )
 
 
 if __name__ == "__main__":

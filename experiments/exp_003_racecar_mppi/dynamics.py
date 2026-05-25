@@ -11,7 +11,7 @@ from uncertain_racecar_gym.jax_env import (
 Array = jax.Array
 
 
-def gen_util_funs(params: NominalJaxEnvParams, reverse=False):
+def gen_util_funs(params: NominalJaxEnvParams, reverse=False, v_target=None):
     step = params.simulation.dt
     reverse = 1 if reverse else -1
 
@@ -98,10 +98,12 @@ def gen_util_funs(params: NominalJaxEnvParams, reverse=False):
             0, jnp.abs(projection_curr.lateral_error) - params.track.road_half_width + 0.1
         )
 
-        return (
-            0.9**t * (10_000_000 * violation)
-            + reverse * p_weight * jnp.abs(track_vel) * jnp.sign(x[3])  # sign flip for fwd/rev
-        )
+        if v_target is None:
+            v_term = reverse * p_weight * jnp.abs(track_vel) * jnp.sign(x[3])
+        else:
+            v_term = p_weight * jnp.abs(track_vel - v_target)
+
+        return 0.9**t * (10_000_000 * violation) + v_term
 
     @jax.jit
     def bound(u):
