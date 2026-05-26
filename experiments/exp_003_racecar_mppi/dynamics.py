@@ -3,17 +3,53 @@ import jax.numpy as jnp
 import jax
 from typing import NamedTuple
 
-from uncertain_racecar_gym.jax_env import (
-    NominalJaxEnvParams,
-    _project_to_track,
-)
-
+from uncertain_racecar_gym.jax_env import NominalJaxEnvParams, JaxTrackProjection
+from uncertain_racecar_gym.track import TrackProjection, TrackModel
+from uncertain_racecar_gym.scenario import Scenario
 Array = jax.Array
 
 
-def gen_util_funs(params: NominalJaxEnvParams, reverse=False, v_target=None):
-    step = params.simulation.dt
+
+def gen_util_funs(scenario: Scenario, reverse=False, v_target=None):
+    step = scenario.simulation.dt
+    dt = scenario.simulation.dt # redundant, but fine
+    vehicle = scenario.vehicle
+    track = TrackModel.from_config(scenario.track)
+    
     reverse = 1 if reverse else -1
+
+
+    def project(x, y):
+        point = jnp.asarray([x, y], dtype=float)
+
+        delta_from_start = point - track.centerline
+        
+        
+        safe_denominator = jnp.where(track._segment_valid, track._segment_length_sq, 1.0)
+        t = jnp.where(
+            track._segment_valid,
+            jnp.divide(jnp.einsum("ij,ij->i", delta_from_start, track._segments), safe_denominator),
+            jnp.zeros_like(track._segment_lengths)
+        )
+        t = jnp.clip(t, 0.0, 1.0)
+        projected = jnp.asarray(track.centerline + track._segments * t[:, None])
+        delta = point - projected
+        distance_sq = jnp.einsum("ij,ij->i", delta, delta)
+        distance_sq = jnp.where(track._segment_valid, distance_sq, jnp.inf)
+        index = jnp.argmin(distance_sq)
+
+        signed_offset = jnp.dot(point - projected[index], jnp.asarray(track._segment_normals)[index])
+        arc = jnp.asarray(track._cumulative)[index] + jnp.asarray(t)[index] * jnp.asarray(track._segment_lengths)[index]
+        
+        return JaxTrackProjection(
+            progress=(arc % track.length) / track.length,
+            arc_length=arc,
+            x=projected[index, 0],
+            y=projected[index, 1],
+            heading=jnp.asarray(track._segment_headings)[index],
+            lateral_error=signed_offset,
+            curvature=jnp.interp(arc, track._arc_samples, track._curvature_samples, period=track.length),
+        )
 
     @jax.jit
     def dynamics(
@@ -27,8 +63,6 @@ def gen_util_funs(params: NominalJaxEnvParams, reverse=False, v_target=None):
 
         throttle_cmd = jnp.maximum(action[1], 0.0)
         brake_cmd = -jnp.minimum(action[1], 0.0)
-        dt = params.simulation.dt
-        vehicle = params.vehicle
 
         # steer = state.steer + (steer_cmd - state.steer) * jnp.minimum(1.0, dt * 8.0)
         steer = steer_cmd
@@ -80,8 +114,8 @@ def gen_util_funs(params: NominalJaxEnvParams, reverse=False, v_target=None):
         gvx = x[3] * jnp.cos(yaw) - x[4] * jnp.sin(yaw)
         gvy = x[3] * jnp.sin(yaw) + x[4] * jnp.cos(yaw)
 
-        projection_curr = _project_to_track(params.track, x[0], x[1])
-        projection_next = _project_to_track(params.track, x[0] + step * gvx, x[1] + step * gvy)
+        projection_curr = project(x[0], x[1])
+        projection_next = project(x[0] + step * gvx, x[1] + step * gvy)
         # track_vel = (projection_next.arc_length - projection_curr.arc_length) / step
 
         # progress_gain = projection_next.progress - projection_curr.progress
@@ -89,13 +123,13 @@ def gen_util_funs(params: NominalJaxEnvParams, reverse=False, v_target=None):
         # crossed = progress_gain < -0.5
         raw_diff = projection_next.arc_length - projection_curr.arc_length
         track_vel = (
-            raw_diff - params.track.length * jnp.round(raw_diff / params.track.length)
+            raw_diff - track.length * jnp.round(raw_diff / track.length)
         ) / step
         # track_vel = jnp.where(crossed, track_vel + params.track.length / step, track_vel)
         # progress_gain = jnp.where(crossed, progress_gain + 1, progress_gain)
 
         violation = jnp.maximum(
-            0, jnp.abs(projection_curr.lateral_error) - params.track.road_half_width + 0.1
+            0, jnp.abs(projection_curr.lateral_error) - track.width / 2 + 0.1
         )
 
         if v_target is None:

@@ -1,5 +1,7 @@
 from uncertain_racecar_gym.jax_env import build_nominal_jax_params, NominalJaxRacecarEnv
-from uncertain_racecar_gym.env import VehicleState
+from uncertain_racecar_gym.env import VehicleState, load_scenario
+from uncertain_racecar_gym.track import TrackModel
+from uncertain_racecar_gym.scenario import VehicleConfig
 import gymnasium as gym
 from src.controllers.mpc.mppi_jax import MPPI_Jax
 from experiments.exp_003_racecar_mppi.dynamics import gen_util_funs
@@ -29,10 +31,9 @@ def run_mpc(scenario, reverse=False):
     )
     env.reset()
 
-    params = build_nominal_jax_params(
-        scenario=f"package://scenarios/{scenario}",
-    )
-    dynamics, cost, bound = gen_util_funs(params[0], reverse=reverse)
+    scenario = load_scenario(f"package://scenarios/{scenario}")
+
+    dynamics, cost, bound = gen_util_funs(scenario, reverse=reverse)
 
     mpc = MPPI_Jax(
         6,
@@ -80,11 +81,11 @@ def run_mpc(scenario, reverse=False):
             yaw_rates.append(state.yaw_rate)
 
             vx_safe = jnp.maximum(jnp.abs(state.vx), 0.5)
-            steer_angle = state.steer * params[1].vehicle.max_steer_rad
+            steer_angle = state.steer * scenario.vehicle.max_steer_rad
             alpha_f = steer_angle - jnp.arctan2(
-                state.vy + params[1].vehicle.lf * state.yaw_rate, vx_safe
+                state.vy + scenario.vehicle.lf * state.yaw_rate, vx_safe
             )
-            alpha_r = -jnp.arctan2(state.vy - params[1].vehicle.lr * state.yaw_rate, vx_safe)
+            alpha_r = -jnp.arctan2(state.vy - scenario.vehicle.lr * state.yaw_rate, vx_safe)
 
             slip_angles_f.append(alpha_f)
             slip_angles_r.append(alpha_r)
