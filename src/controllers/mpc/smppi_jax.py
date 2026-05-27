@@ -56,7 +56,7 @@ def rollout(
     if term_cost:
         S += term_cost(x, u[-1])
 
-    diff = (new_a - jnp.roll(new_a, 1, axis=0))
+    diff = (new_a[1:] - jnp.roll(new_a[:-1], 1, axis=0))
 
     S += jnp.einsum("tn,nm,tm->", diff, omega, diff)
 
@@ -77,7 +77,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
         u = jnp.roll(u, -1, axis=0)
         u = u.at[-1].set(0)
         a = jnp.roll(a, -1, axis=0)
-        a = a.at[-1].set(0)
+        a = a.at[-1].set(a[-2])
 
     x = jnp.asarray(x)
 
@@ -85,7 +85,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
     u_batch = jnp.repeat(jnp.expand_dims(u, 0), K, axis=0)
 
     key, subkey = jax.random.split(key)
-    noise = jax.random.normal(subkey, u_batch.shape) * jnp.sqrt(cv)
+    noise = jax.random.normal(subkey, u_batch.shape) * jnp.sqrt(jnp.diag(cv))
 
     costs, bounded_noise = forward_sim(x_batch, u_batch, a, noise)
 
@@ -113,6 +113,9 @@ class SMPPI_Jax:
         term_cost_func,
         cost_func,
         bound_control_func,
+        bound_der_control_func,
+        cv,
+        omega,
         inverse_temp=1,
         alpha=0.01,
         gamma=0.01,
@@ -141,10 +144,11 @@ class SMPPI_Jax:
         self.term_cost = term_cost_func
         self.cost = cost_func
         self.bound_control = bound_control_func
+        self.bound_der_control = bound_der_control_func
         self.alpha = alpha
         self.inverse_temp = inverse_temp
         self.gamma = gamma
-        self.omega = jnp.identity(u_d) * 2e-2
+        self.omega = omega
         self.K = K
         self.device = device
 
@@ -153,7 +157,7 @@ class SMPPI_Jax:
         self.T = T
 
         self.step = step
-        self.cv = jnp.eye(u_d) * 0.7
+        self.cv = cv
 
         self.inv_cv = jnp.linalg.inv(self.cv)
 
@@ -175,7 +179,8 @@ class SMPPI_Jax:
         v = u + noise
         prev = round(self.K * (1 - self.alpha))
         v = v.at[prev:].set(noise[prev:])
-
+        v = self.bound_der_control(v)
+        noise = v - u
         
         # v = self.bound_control(v)
         # noise = v - u

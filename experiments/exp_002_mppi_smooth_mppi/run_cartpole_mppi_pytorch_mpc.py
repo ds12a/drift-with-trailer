@@ -76,7 +76,7 @@ def run_mpc():
         else "cpu"
     )
 
-    mpc = MPPI_Torch(4, 1, gen_dynamics, term_cost, cost, bound_control, device=device)
+    mpc = MPPI_Torch(4, 1, gen_dynamics, term_cost, cost, bound_control, torch.eye(1) * 3, device=device)
     
     observation, reward, terminated, truncated, info = env.step(0)
 

@@ -19,6 +19,7 @@ class MPPI_Torch:
         term_cost_func,
         cost_func,
         bound_control_func,
+        cv,
         inverse_temp=1,
         alpha=0.01,
         gamma=0.05,
@@ -59,7 +60,7 @@ class MPPI_Torch:
         self.T = T
 
         self.step = step
-        self.cv = torch.eye(u_d, device=device) * 3
+        self.cv = cv
 
         self.inv_cv = torch.inverse(self.cv)
 

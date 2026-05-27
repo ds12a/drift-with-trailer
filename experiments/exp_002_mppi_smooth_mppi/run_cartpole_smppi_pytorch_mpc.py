@@ -64,6 +64,9 @@ def term_cost(x, u):
 def bound_control(u):
     return torch.clamp(u, -FORCE, FORCE)
 
+# Placeholder
+def der_bound_control(u):
+    return u
 
 
 def run_mpc():
@@ -77,7 +80,7 @@ def run_mpc():
         else "cpu"
     )
 
-    mpc = SMPPI_Torch(4, 1, gen_dynamics, term_cost, cost, bound_control, device=device)
+    mpc = SMPPI_Torch(4, 1, gen_dynamics, term_cost, cost, bound_control, der_bound_control, torch.eye(1) * 0.7, device=device)
     
     observation, reward, terminated, truncated, info = env.step(0)
     

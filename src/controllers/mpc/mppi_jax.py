@@ -74,7 +74,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
     u_batch = jnp.repeat(jnp.expand_dims(u, 0), K, axis=0)
 
     key, subkey = jax.random.split(key)
-    noise = jax.random.normal(subkey, u_batch.shape) * jnp.sqrt(cv)
+    noise = jax.random.normal(subkey, u_batch.shape) * jnp.sqrt(jnp.diag(cv))
 
     costs, bounded_noise = forward_sim(x_batch, u_batch, noise)
 
@@ -100,6 +100,7 @@ class MPPI_Jax:
         term_cost_func,
         cost_func,
         bound_control_func,
+        cv,
         inverse_temp=1,
         alpha=0.01,
         gamma=0.01,
@@ -140,7 +141,7 @@ class MPPI_Jax:
         self.T = T
 
         self.step = step
-        self.cv = jnp.eye(u_d) * 3
+        self.cv = cv
 
         self.inv_cv = jnp.linalg.inv(self.cv)
 

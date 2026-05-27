@@ -67,6 +67,10 @@ def term_cost(x, u):
 def bound_control(u):
     return jnp.clip(u, -FORCE, FORCE)
 
+# Placeholder for cartpole
+def der_bound_control(u):
+    return u
+
 
 
 def run_mpc():
@@ -75,7 +79,7 @@ def run_mpc():
     env.reset()
 
 
-    mpc = SMPPI_Jax(4, 1, gen_dynamics, term_cost, cost, bound_control)
+    mpc = SMPPI_Jax(4, 1, gen_dynamics, term_cost, cost, bound_control, der_bound_control, jnp.eye(1) * 0.7)
     
     observation, reward, terminated, truncated, info = env.step(0)
     
