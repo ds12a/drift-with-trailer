@@ -144,7 +144,7 @@ class TrackModel:
         distance_sq = np.where(self._segment_valid, distance_sq, np.inf)
         index = int(np.argmin(distance_sq))
         if not np.isfinite(distance_sq[index]):
-            raise RuntimeError("Unable to project point onto track.")
+            raise RuntimeError(f"Unable to project point onto track: ({x}, {y})")
 
         signed_offset = float(np.dot(point - projected[index], self._segment_normals[index]))
         arc = float(self._cumulative[index] + t[index] * self._segment_lengths[index])

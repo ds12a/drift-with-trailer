@@ -17,7 +17,7 @@ import pandas as pd
 from src.simulation.rendering import PyBulletMirrorRenderer
 
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, astuple
 
 
 def wrap_angle(angle: float) -> float:
@@ -75,7 +75,7 @@ class DynamicTrailerBicycleModel:
             x=x,
             y=y,
             yaw_truck=yaw,
-            yaw_trailer=yaw,
+            yaw_trailer=yaw + 0.5,
             vx=speed,
             vy=0.0,
             yaw_truck_rate=0.0,
@@ -85,7 +85,178 @@ class DynamicTrailerBicycleModel:
         )
 
     def step(self, state: VehicleState, action: jnp.ndarray, track: TrackModel) -> VehicleState:
-        pass # math
+        x, y, phi_1, phi_2, v_1x, v_1y, phi_1_dot, phi_2_dot, _, _ = astuple(state)
+
+        """
+        $$\begin{bmatrix}
+        m_1+m_2 & 0 & 0 & -m_2 L_{2f}\sin\alpha\\
+        0 & m_1+m_2 & -m_2 h & -m_2 L_{2f}\cos\alpha\\
+        0 & -m_2 h & I_{z1}+m_2 h^2 & m_2 L_{2f} h\cos\alpha\\
+        -m_2 L_{2f}\sin\alpha & -m_2 L_{2f}\cos\alpha & m_2 L_{2f} h\cos\alpha & I_{z2}+m_2 L_{2f}^2
+        \end{bmatrix}
+        \begin{bmatrix}\dot v_{1x}\\ \dot v_{1y}\\ \ddot\phi_1\\ \ddot\phi_2\end{bmatrix}
+        =
+        \begin{bmatrix}
+        F_{1xr}+F_{1xf}\cos\delta_{1f}-F_{1yf}\sin\delta_{1f}+F_{2xr}\cos\alpha+F_{2yr}\sin\alpha +m_1 v_{1y}\dot\phi_1+m_2\dot\phi_1\left(v_{2y}\cos\alpha-v_{2x}\sin\alpha\right)+m_2 L_{2f}\dot\alpha\dot\phi_2\cos\alpha \\ 
+        F_{1yr}+F_{1yf}\cos\delta_{1f}+F_{1xf}\sin\delta_{1f}-F_{2xr}\sin\alpha+F_{2yr}\cos\alpha -m_1 v_{1x}\dot\phi_1-m_2\dot\phi_1\left(v_{2x}\cos\alpha+v_{2y}\sin\alpha\right)-m_2 L_{2f}\dot\alpha\dot\phi_2\sin\alpha  \\ 
+         -F_{1yr}L_{1r}+\left(F_{1yf}\cos\delta_{1f}+F_{1xf}\sin\delta_{1f}\right)L_{1f}+h F_{2xr}\sin\alpha-h F_{2yr}\cos\alpha +m_2 h\dot\phi_1\left(v_{2x}\cos\alpha+v_{2y}\sin\alpha\right)+m_2 h L_{2f}\dot\alpha\dot\phi_2\sin\alpha\\ 
+         -(L_{2f}+L_{2r})F_{2yr}+m_2 L_{2f} v_{2x}\dot\phi_1
+        \end{bmatrix}$$
+        with
+
+        $$v_{2x} = v_{1x} \cos \alpha - (v_{1y} - \dot{\phi}_{1}h)\sin \alpha$$
+        $$v_{2y} = v_{1x} \sin \alpha + (v_{1}y - \dot{\phi}_{1}h) \cos \alpha - L_{2f}\dot{\phi}_{2}$$
+
+        """
+
+        vehicle = self.config.vehicle
+        steer_cmd = jnp.clip(action[0], -1.0, 1.0)
+        accel_cmd = jnp.clip(action[1], -1.0, 1.0)
+        dt = self.config.simulation.dt
+
+        throttle = jnp.maximum(accel_cmd, 0.0)
+        brake = -jnp.minimum(accel_cmd, 0.0)
+
+        vx_safe = jnp.maximum(jnp.abs(v_1x), 0.5)
+        delta = steer_cmd * vehicle.max_steer_rad
+        alpha_f = delta - jnp.arctan2(v_1y + vehicle.lf * phi_1_dot, vx_safe)
+        alpha_r = -jnp.arctan2(v_1y - vehicle.lr * phi_1_dot, vx_safe)
+
+        mu = track.find_mu(state.x, state.y)
+
+        fzf = vehicle.mass * 9.8 * vehicle.lr / (vehicle.lf + vehicle.lr) + vehicle.trailer_mass * 9.8 * vehicle.l2r * (vehicle.lr - vehicle.hitch_offset) / (
+            (vehicle.lf + vehicle.lr) * (vehicle.l2f + vehicle.l2r)
+        )
+
+        F_1yf = -compute_fy(
+            alpha_f,
+            vehicle.cornering_stiffness_front,
+            fzf,
+            0,
+            mu,
+            vehicle.gamma,
+        )
+
+        fzr = vehicle.mass * 9.8 * vehicle.lf / (
+            vehicle.lf + vehicle.lr
+        ) + vehicle.trailer_mass * 9.8 * vehicle.l2r * (vehicle.lf + vehicle.hitch_offset) / (
+            (vehicle.lf + vehicle.lr) * (vehicle.l2f + vehicle.l2r)
+        )
+        commanded = throttle * vehicle.max_accel - brake * vehicle.max_brake
+        fxr = mu * fzr * jnp.tanh(vehicle.mass * commanded / (fzr * mu))
+
+        F_1yr = -compute_fy(alpha_r, vehicle.cornering_stiffness_rear, fzr, fxr, mu, vehicle.gamma)
+
+        alpha = phi_1 - phi_2
+        sa = jnp.sin(alpha)
+        ca = jnp.cos(alpha)
+
+        v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
+        v_2y = (
+            v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
+        )
+
+        v2x_safe = jnp.maximum(jnp.abs(v_2x), 0.5)
+        alpha_t = -jnp.arctan2(v_2y - vehicle.l2r * phi_2_dot, v2x_safe)
+
+        fzr_trailer = vehicle.trailer_mass * 9.8 * vehicle.l2f / (vehicle.l2f + vehicle.l2r)
+        F_2yr = -compute_fy(
+            alpha_t, vehicle.cornering_stiffness_trailer, fzr_trailer, 0, mu, vehicle.gamma
+        )
+
+        total_mass = vehicle.mass + vehicle.trailer_mass
+        cd = jnp.cos(delta)
+        sd = jnp.sin(delta)
+        alpha_dot = phi_1_dot - phi_2_dot
+
+        A = jnp.array(
+            [
+                [total_mass, 0, 0, -vehicle.trailer_mass * vehicle.l2f * sa],
+                [
+                    0,
+                    total_mass,
+                    -vehicle.trailer_mass * vehicle.hitch_offset,
+                    -vehicle.trailer_mass * vehicle.l2f * ca,
+                ],
+                [
+                    0,
+                    -vehicle.trailer_mass * vehicle.hitch_offset,
+                    vehicle.inertia_z + vehicle.trailer_mass * vehicle.hitch_offset**2,
+                    vehicle.trailer_mass * vehicle.l2f * vehicle.hitch_offset * ca,
+                ],
+                [
+                    -vehicle.trailer_mass * vehicle.l2f * sa,
+                    -vehicle.trailer_mass * vehicle.l2f * ca,
+                    vehicle.trailer_mass * vehicle.l2f * vehicle.hitch_offset * ca,
+                    vehicle.trailer_inertia_z + vehicle.trailer_mass * vehicle.l2f**2,
+                ],
+            ]
+        )
+
+        b = jnp.array(
+            [
+                fxr
+                - F_1yf * sd
+                + F_2yr * sa
+                + vehicle.mass * v_1y * phi_1_dot
+                + vehicle.trailer_mass * phi_1_dot * (v_2y * ca - v_2x * sa)
+                + vehicle.trailer_mass * vehicle.l2f * alpha_dot * phi_2_dot * ca,
+                F_1yr
+                + F_1yf * cd
+                + F_2yr * ca
+                - vehicle.mass * v_1x * phi_1_dot
+                - vehicle.trailer_mass * phi_1_dot * (v_2x * ca + v_2y * sa)
+                - vehicle.trailer_mass * vehicle.l2f * alpha_dot * phi_2_dot * sa,
+                -F_1yr * vehicle.lr
+                + F_1yf * cd * vehicle.lf
+                - vehicle.hitch_offset * F_2yr * ca
+                + vehicle.trailer_mass * vehicle.hitch_offset * phi_1_dot * (v_2x * ca + v_2y * sa)
+                + vehicle.trailer_mass
+                * vehicle.hitch_offset
+                * vehicle.l2f
+                * alpha_dot
+                * phi_2_dot
+                * sa,
+                -(vehicle.l2f + vehicle.l2r) * F_2yr
+                + vehicle.trailer_mass * vehicle.l2f * v_2x * phi_1_dot,
+            ]
+        )
+
+        v_1x_dot, v_1y_dot, phi_1_ddot, phi_2_ddot = jnp.linalg.solve(A, b)
+
+        next_vx = v_1x + v_1x_dot * dt
+        next_vy = v_1y + v_1y_dot * dt
+        next_phi_1_dot = phi_1_dot + phi_1_ddot * dt
+        next_phi_2_dot = phi_2_dot + phi_2_ddot * dt
+
+        # Trapezoidal (avg) approximations
+        avg_vx = 0.5 * (v_1x + next_vx)
+        avg_vy = 0.5 * (v_1y + next_vy)
+        avg_phi_1_dot = 0.5 * (phi_1_dot + next_phi_1_dot)
+        avg_phi_2_dot = 0.5 * (phi_2_dot + next_phi_2_dot)
+
+        # Change of frame
+        xdot = avg_vx * jnp.cos(phi_1) - avg_vy * jnp.sin(phi_1)
+        ydot = avg_vx * jnp.sin(phi_1) + avg_vy * jnp.cos(phi_1)
+
+        next_x = x + xdot * dt
+        next_y = y + ydot * dt
+        next_phi_1 = phi_1 + avg_phi_1_dot * dt
+        next_phi_2 = phi_2 + avg_phi_2_dot * dt
+
+        return VehicleState(
+            next_x,
+            next_y,
+            next_phi_1,
+            next_phi_2,
+            next_vx,
+            next_vy,
+            next_phi_1_dot,
+            next_phi_2_dot,
+            steer_cmd,
+            accel_cmd,
+        )
+
 
 class TrailerBicycleEnv(gym.Env):
     metadata = {
@@ -194,8 +365,8 @@ class TrailerBicycleEnv(gym.Env):
         return {
             "x": self._state.x,
             "y": self._state.y,
-            "yaw_truck": self._state.yaw_truck,
-            "yaw_trailer": self._state.yaw_trailer,
+            "yaw": self._state.yaw_truck,
+            "trailer_yaw": self._state.yaw_trailer,
             "steering_angle": self._state.steer * self.scenario.vehicle.max_steer_rad,
             "speed": self._state.vx,
         }

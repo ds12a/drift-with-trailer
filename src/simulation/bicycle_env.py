@@ -24,7 +24,6 @@ def wrap_angle(angle: float) -> float:
     return (angle + jnp.pi) % (2.0 * jnp.pi) - jnp.pi
 
 
-
 @dataclass(slots=True)
 class VehicleState:
     x: float
@@ -118,35 +117,20 @@ class DynamicBicycleModel:
             vehicle.mass * 9.8 * vehicle.lr / (vehicle.lf + vehicle.lr),
             0,
             mu,
-            vehicle.gamma
+            vehicle.gamma,
         )
 
         fzr = vehicle.mass * 9.8 * vehicle.lf / (vehicle.lf + vehicle.lr)
-        fyr = -compute_fy(
-            alpha_r,
-            vehicle.cornering_stiffness_rear,
-            fzr,
-            mu
-            * fzr
-            * jnp.tanh(
-                vehicle.mass
-                * (throttle * vehicle.max_accel - brake * vehicle.max_brake)
-                / (fzr * mu)
-            ),
-            mu,
-            vehicle.gamma
-        )
+        commanded = throttle * vehicle.max_accel - brake * vehicle.max_brake
+        fxr = mu * fzr * jnp.tanh(vehicle.mass * commanded / (fzr * mu))
+
+        fyr = -compute_fy(alpha_r, vehicle.cornering_stiffness_rear, fzr, fxr, mu, vehicle.gamma)
 
         longitudinal_acc = (
-            throttle * vehicle.max_accel
-            - brake * vehicle.max_brake
-            - vehicle.drag_coefficient
-            * state_xdot
-            * jnp.abs(state_xdot)
-            / jnp.maximum(vehicle.mass, 1.0)
-        )
+            fxr - vehicle.drag_coefficient * state_xdot * jnp.abs(state_xdot)
+        ) / jnp.maximum(vehicle.mass, 1.0)
 
-        vx_dot = longitudinal_acc + state_ydot * state_yaw_dot 
+        vx_dot = longitudinal_acc + state_ydot * state_yaw_dot
         vy_dot = (fyf * jnp.cos(steer_angle) + fyr) / vehicle.mass - state_xdot * state_yaw_dot
         yaw_rate_dot = (
             vehicle.lf * fyf * jnp.cos(steer_angle) - vehicle.lr * fyr

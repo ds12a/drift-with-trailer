@@ -13,13 +13,25 @@ import numpy as np
 import pybullet as p
 from PIL import Image, ImageDraw
 
-from uncertain_racecar_gym.common import package_asset_path # TODO fix
 from src.simulation.config.bicycle_config import BicycleEnvConfig
+from src.simulation.config.trailer_bicycle_config import TrailerBicycleEnvConfig
+
 from src.utils.track import TrackModel
 
 
+def package_asset_path(relative_path: str) -> Path:
+    return Path(str(files("uncertain_racecar_gym").joinpath("assets").joinpath(relative_path)))
+
+
 class PyBulletMirrorRenderer:
-    def __init__(self, scenario: BicycleEnvConfig, track: TrackModel, render_mode: str, width: int = 1280, height: int = 720):
+    def __init__(
+        self,
+        scenario: BicycleEnvConfig | TrailerBicycleEnvConfig,
+        track: TrackModel,
+        render_mode: str,
+        width: int = 1280,
+        height: int = 720,
+    ):
         self.scenario = scenario
         self.track = track
         self.render_mode = render_mode
@@ -83,7 +95,9 @@ class PyBulletMirrorRenderer:
         )
 
     def _connect(self) -> None:
-        use_gui = self.render_mode == "human" and (os.environ.get("DISPLAY") or os.name == "nt" or os.uname().sysname == "Darwin")
+        use_gui = self.render_mode == "human" and (
+            os.environ.get("DISPLAY") or os.name == "nt" or os.uname().sysname == "Darwin"
+        )
         connection_mode = p.GUI if use_gui else p.DIRECT
         self.client_id = p.connect(connection_mode)
         p.resetSimulation(physicsClientId=self.client_id)
@@ -218,21 +232,17 @@ class PyBulletMirrorRenderer:
                 baseOrientation=p.getQuaternionFromEuler([0.0, 0.0, yaw]),
                 physicsClientId=self.client_id,
             )
-        
+
         for patch in self.track.friction_map:
             # TODO check this
             x, y, r, mu = patch
-            num_segments = 24 
+            num_segments = 24
             vertices = [[0.0, 0.0, 0.0]]
             indices = []
-            
+
             for i in range(num_segments):
                 angle = 2.0 * math.pi * (i / num_segments)
-                vertices.append([
-                    float(r * math.cos(angle)), 
-                    float(r * math.sin(angle)), 
-                    0.0
-                ])
+                vertices.append([float(r * math.cos(angle)), float(r * math.sin(angle)), 0.0])
             for i in range(1, num_segments + 1):
                 next_i = 1 if i == num_segments else i + 1
                 indices.extend([0, i, next_i])
@@ -252,11 +262,17 @@ class PyBulletMirrorRenderer:
                 baseOrientation=p.getQuaternionFromEuler([0.0, 0.0, 0.0]),
                 physicsClientId=self.client_id,
             )
-     
+
         self.vehicle_id, self._joint_names = self._spawn_vehicle(rgba=None)
 
     def _spawn_vehicle(self, rgba: list[float] | None) -> tuple[int, dict[str, int]]:
-        urdf_path = package_asset_path("vehicles/simple_racecar.urdf")
+
+        urdf_path = (
+            "./src/simulation/assets/vehicles/tractor_trailer.urdf"
+            if isinstance(self.scenario, TrailerBicycleEnvConfig)
+            else "./src/simulation/assets/vehicles/simple_racecar.urdf"
+        )
+
         vehicle_id = p.loadURDF(
             str(urdf_path),
             [0.0, 0.0, 0.2],
@@ -268,28 +284,58 @@ class PyBulletMirrorRenderer:
             p.changeVisualShape(vehicle_id, -1, rgbaColor=rgba, physicsClientId=self.client_id)
         p.setCollisionFilterGroupMask(vehicle_id, -1, 0, 0, physicsClientId=self.client_id)
         for joint_index in range(p.getNumJoints(vehicle_id, physicsClientId=self.client_id)):
-            joint_name = p.getJointInfo(vehicle_id, joint_index, physicsClientId=self.client_id)[1].decode("utf-8")
+            joint_name = p.getJointInfo(vehicle_id, joint_index, physicsClientId=self.client_id)[
+                1
+            ].decode("utf-8")
             joint_names[joint_name] = joint_index
             if rgba is not None:
-                p.changeVisualShape(vehicle_id, joint_index, rgbaColor=rgba, physicsClientId=self.client_id)
-            p.setCollisionFilterGroupMask(vehicle_id, joint_index, 0, 0, physicsClientId=self.client_id)
+                p.changeVisualShape(
+                    vehicle_id, joint_index, rgbaColor=rgba, physicsClientId=self.client_id
+                )
+            p.setCollisionFilterGroupMask(
+                vehicle_id, joint_index, 0, 0, physicsClientId=self.client_id
+            )
         return vehicle_id, joint_names
 
     def _ensure_ghost_vehicle(self) -> None:
         if self.ghost_vehicle_id is None:
-            self.ghost_vehicle_id, self._ghost_joint_names = self._spawn_vehicle([0.32, 0.72, 1.0, 0.38])
+            self.ghost_vehicle_id, self._ghost_joint_names = self._spawn_vehicle(
+                [0.32, 0.72, 1.0, 0.38]
+            )
 
-    def _apply_vehicle_state(self, vehicle_id: int, joint_names: dict[str, int], render_state: dict) -> None:
+    def _apply_vehicle_state(
+        self, vehicle_id: int, joint_names: dict[str, int], render_state: dict
+    ) -> None:
         position = [render_state["x"], render_state["y"], 0.22]
         orientation = p.getQuaternionFromEuler([0.0, 0.0, render_state["yaw"]])
-        p.resetBasePositionAndOrientation(vehicle_id, position, orientation, physicsClientId=self.client_id)
+        p.resetBasePositionAndOrientation(
+            vehicle_id, position, orientation, physicsClientId=self.client_id
+        )
 
         steer_angle = render_state["steering_angle"]
         # wheel_rotation = render_state["wheel_rotation"]
         front_steer_joints = ("front_left_steer", "front_right_steer")
-        wheel_joints = ("front_left_wheel", "front_right_wheel", "rear_left_wheel", "rear_right_wheel")
+        wheel_joints = (
+            "front_left_wheel",
+            "front_right_wheel",
+            "rear_left_wheel",
+            "rear_right_wheel",
+        )
         for name in front_steer_joints:
-            p.resetJointState(vehicle_id, joint_names[name], targetValue=steer_angle, physicsClientId=self.client_id)
+            p.resetJointState(
+                vehicle_id,
+                joint_names[name],
+                targetValue=steer_angle,
+                physicsClientId=self.client_id,
+            )
+
+        if "hitch" in joint_names:
+            p.resetJointState(
+                vehicle_id,
+                joint_names["hitch"],
+                targetValue=render_state["trailer_yaw"] - render_state["yaw"],
+                physicsClientId=self.client_id,
+            )
         # for name in wheel_joints:
         #     p.resetJointState(vehicle_id, joint_names[name], targetValue=wheel_rotation, physicsClientId=self.client_id)
         self._frame_index = int(render_state.get("frame_index", self._frame_index + 1))
@@ -298,7 +344,9 @@ class PyBulletMirrorRenderer:
         self._apply_vehicle_state(self.vehicle_id, self._joint_names, render_state)
         if comparison_state is not None:
             self._ensure_ghost_vehicle()
-            self._apply_vehicle_state(self.ghost_vehicle_id, self._ghost_joint_names, comparison_state)
+            self._apply_vehicle_state(
+                self.ghost_vehicle_id, self._ghost_joint_names, comparison_state
+            )
         p.stepSimulation(physicsClientId=self.client_id)
 
     def _camera(self, render_state: dict, mode: str):
@@ -308,24 +356,39 @@ class PyBulletMirrorRenderer:
 
         if mode == "birds_eye":
             target = [x, y, 0.0]
-            view = p.computeViewMatrixFromYawPitchRoll(target, distance=18.0, yaw=0.0, pitch=-89.0, roll=0.0, upAxisIndex=2)
+            view = p.computeViewMatrixFromYawPitchRoll(
+                target, distance=18.0, yaw=0.0, pitch=-89.0, roll=0.0, upAxisIndex=2
+            )
         elif mode == "cinematic":
             orbit_yaw = math.degrees((self._frame_index * 0.03) % (2.0 * math.pi))
             target = [x, y, 0.0]
-            view = p.computeViewMatrixFromYawPitchRoll(target, distance=7.5, yaw=orbit_yaw, pitch=-20.0, roll=0.0, upAxisIndex=2)
+            view = p.computeViewMatrixFromYawPitchRoll(
+                target, distance=7.5, yaw=orbit_yaw, pitch=-20.0, roll=0.0, upAxisIndex=2
+            )
         else:
-            camera_position = np.array([x, y, 0.45]) + np.array([-4.5 * math.cos(yaw), -4.5 * math.sin(yaw), 1.6])
-            target = np.array([x, y, 0.35]) + np.array([2.5 * math.cos(yaw), 2.5 * math.sin(yaw), 0.2])
+            camera_position = np.array([x, y, 0.45]) + np.array(
+                [-4.5 * math.cos(yaw), -4.5 * math.sin(yaw), 1.6]
+            )
+            target = np.array([x, y, 0.35]) + np.array(
+                [2.5 * math.cos(yaw), 2.5 * math.sin(yaw), 0.2]
+            )
             view = p.computeViewMatrix(camera_position, target, [0.0, 0.0, 1.0])
 
-        projection = p.computeProjectionMatrixFOV(fov=60.0, aspect=float(self.width) / float(self.height), nearVal=0.05, farVal=100.0)
+        projection = p.computeProjectionMatrixFOV(
+            fov=60.0, aspect=float(self.width) / float(self.height), nearVal=0.05, farVal=100.0
+        )
         return view, projection
 
     @staticmethod
     def _matrix4(values: list[float] | tuple[float, ...]) -> np.ndarray:
         return np.asarray(values, dtype=np.float32).reshape((4, 4), order="F")
 
-    def _project_xy(self, xy_points: np.ndarray, view: list[float] | tuple[float, ...], projection: list[float] | tuple[float, ...]) -> np.ndarray:
+    def _project_xy(
+        self,
+        xy_points: np.ndarray,
+        view: list[float] | tuple[float, ...],
+        projection: list[float] | tuple[float, ...],
+    ) -> np.ndarray:
         if xy_points.size == 0:
             return np.zeros((0, 2), dtype=np.float32)
         view_matrix = self._matrix4(view)
@@ -367,8 +430,13 @@ class PyBulletMirrorRenderer:
         image = Image.fromarray(frame.astype(np.uint8), mode="RGB").convert("RGBA")
         draw = ImageDraw.Draw(image, "RGBA")
 
-        candidate_xy = np.asarray(planner_debug.get("candidate_xy", np.zeros((0, 0, 2), dtype=np.float32)), dtype=np.float32)
-        final_xy = np.asarray(planner_debug.get("final_xy", np.zeros((0, 2), dtype=np.float32)), dtype=np.float32)
+        candidate_xy = np.asarray(
+            planner_debug.get("candidate_xy", np.zeros((0, 0, 2), dtype=np.float32)),
+            dtype=np.float32,
+        )
+        final_xy = np.asarray(
+            planner_debug.get("final_xy", np.zeros((0, 2), dtype=np.float32)), dtype=np.float32
+        )
 
         for trajectory in candidate_xy:
             pixels = self._project_xy(trajectory, view, projection)
@@ -392,12 +460,17 @@ class PyBulletMirrorRenderer:
         planner_debug: dict | None = None,
     ) -> np.ndarray | None:
         mode = self.render_mode.replace("rgb_array_", "")
-        if self.render_mode == "human" and p.getConnectionInfo(self.client_id)["connectionMethod"] == p.GUI:
+        if (
+            self.render_mode == "human"
+            and p.getConnectionInfo(self.client_id)["connectionMethod"] == p.GUI
+        ):
             self.update(render_state, comparison_state=comparison_state)
             return None
 
         self.update(render_state, comparison_state=comparison_state)
-        view, projection = self._camera(render_state, mode if mode in {"follow", "birds_eye", "cinematic"} else "follow")
+        view, projection = self._camera(
+            render_state, mode if mode in {"follow", "birds_eye", "cinematic"} else "follow"
+        )
         try:
             _, _, rgb, _, _ = p.getCameraImage(
                 width=self.width,
