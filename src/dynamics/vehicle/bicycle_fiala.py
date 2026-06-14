@@ -52,7 +52,7 @@ def gen_util_funs(params: BicycleEnvConfig, reverse=False, v_target=None):
         state: Array,
         action: Array,
     ) -> Array:
-        state_x, state_y, state_yaw, state_xdot, state_ydot, state_yaw_dot, mu = jnp.unstack(state)
+        state_x, state_y, state_yaw, state_xdot, state_ydot, state_yaw_dot, mu, index = jnp.unstack(state)
         # jax.debug.print("{mu}", mu=mu)
 
         action = jnp.asarray(action, dtype=jnp.float32)
@@ -116,7 +116,7 @@ def gen_util_funs(params: BicycleEnvConfig, reverse=False, v_target=None):
         xdot = avg_vx * jnp.cos(state_yaw) - avg_vy * jnp.sin(state_yaw)
         ydot = avg_vx * jnp.sin(state_yaw) + avg_vy * jnp.cos(state_yaw)
 
-        return jnp.asarray([xdot, ydot, avg_yaw_rate, vx_dot, vy_dot, yaw_rate_dot, 0])
+        return jnp.asarray([xdot, ydot, avg_yaw_rate, vx_dot, vy_dot, yaw_rate_dot, 0, 0])
 
     @jax.jit
     def cost(x, u, t):
@@ -138,7 +138,7 @@ def gen_util_funs(params: BicycleEnvConfig, reverse=False, v_target=None):
             return jnp.maximum(0, jnp.abs(alpha) - alpha_sl)
 
         def combined_traction_penalty(state, action):
-            state_x, state_y, state_yaw, state_xdot, state_ydot, state_yaw_dot, mu = jnp.unstack(state)
+            state_x, state_y, state_yaw, state_xdot, state_ydot, state_yaw_dot, mu, index = jnp.unstack(state)
             action = jnp.asarray(action, dtype=jnp.float32)
             steer_cmd = jnp.clip(action[0], -1.0, 1.0)
 
@@ -179,52 +179,57 @@ def gen_util_funs(params: BicycleEnvConfig, reverse=False, v_target=None):
 
             return pen_f ** 2 + pen_r ** 2
 
-        def _project_to_track(x, y) -> TrackProjection:
+        def _project_to_track(x, y, guess) -> tuple[TrackProjection, jax.Array]:
             """
             From Uncertain Racecar Gym, adapted
             """
-            lookahead_thresh = 50  # should be meters, TODO tune
-            lookahead_num = 5
+            WINDOW = 10
+            if guess is not None:
+                window = (guess.astype(jnp.int32) - 5) + jnp.arange(WINDOW)
+            else:
+                window = jnp.arange(len(track.centerline))
+
+            segments_window = jnp.take(track._segments, window, mode="wrap", axis=0)
+            segments_len_window = jnp.take(track._segment_lengths, window, mode="wrap")
+            segments_sq_window = jnp.take(track._segment_length_sq, window, mode="wrap")
+            centerline_window = jnp.take(track.centerline, window, mode="wrap", axis=0)
+            segments_normal_window = jnp.take(track._segment_normals, window, mode="wrap", axis=0)
+            segments_heading_window = jnp.take(track._segment_headings, window, mode="wrap")
+            valid_window = jnp.take(track._segment_valid, window, mode="wrap")
+            cumulative_window = jnp.take(track._cumulative, window, mode="wrap")
 
             point = jnp.stack([x, y])
-            p0 = jnp.array(track.centerline)
-            segments = jnp.array(track._segments)
-            seg_len = jnp.array(track._segment_lengths)
+            delta_from_start = point - centerline_window
 
-            denom = jnp.maximum(seg_len * seg_len, 1e-9)
-            t = jnp.clip(jnp.sum((point - p0) * segments, axis=1) / denom, 0.0, 1.0)
-            projected = p0 + segments * t[:, None]
-            delta = point[None, :] - projected
-            distance_sq = jnp.sum(delta * delta, axis=1)
-            valid_distance_sq = jnp.where(seg_len > 1e-9, distance_sq, jnp.inf)
-            index = jnp.argmin(valid_distance_sq)
-
-            chosen_segment = segments[index]
-            chosen_length = seg_len[index]
-            tangent = chosen_segment / jnp.maximum(chosen_length, 1e-9)
-            normal = jnp.stack([-tangent[1], tangent[0]])
-            chosen_projected = projected[index]
-            signed_offset = jnp.sum((point - chosen_projected) * normal)
-
-            arc = jnp.array(track._cumulative)[index] + t[index] * chosen_length
-
-            lookahead_pts = jnp.linspace(arc, arc + lookahead_thresh, lookahead_num)
-
-            # curvature = jnp.interp(arc, track._arc_samples, track._curvature_samples)
-            curvature = jnp.mean(
-                jnp.abs(jnp.interp(lookahead_pts, track._arc_samples, track._curvature_samples))
-            )  # TODO split off curvature for efficiency?
-
-            heading = jnp.arctan2(chosen_segment[1], chosen_segment[0])
-            return TrackProjection(
-                progress=jnp.mod(arc / track.length, 1.0),
-                arc_length=arc,
-                x=chosen_projected[0],
-                y=chosen_projected[1],
-                heading=heading,
-                lateral_error=signed_offset,
-                curvature=curvature,
+            denom = jnp.where(valid_window, segments_sq_window, 1.0)
+            t = jnp.where(
+                valid_window,
+                jnp.einsum("ij,ij->i", delta_from_start, segments_window) / denom,
+                0.0,
             )
+            t = jnp.clip(t, 0.0, 1.0)
+            projected = centerline_window + segments_window * t[:, None]
+            delta = point - projected
+            distance_sq = jnp.einsum("ij,ij->i", delta, delta)
+            distance_sq = jnp.where(valid_window, distance_sq, jnp.inf)
+            index = jnp.argmin(distance_sq)  # stays traced; dynamic indexing -> gather
+
+            signed_offset = jnp.dot(point - projected[index], segments_normal_window[index])
+            arc = cumulative_window[index] + t[index] * segments_len_window[index]
+            return (
+                TrackProjection(
+                    progress=track.arc_to_progress(arc),
+                    arc_length=arc,
+                    x=projected[index, 0],
+                    y=projected[index, 1],
+                    heading=segments_heading_window[index],
+                    lateral_error=signed_offset,
+                    curvature=jnp.interp(
+                        arc, track._arc_samples, track._curvature_samples, period=track.length
+                    ),
+                ),
+                window[index],
+            )   
 
         ####### End Helpers #######
 
@@ -234,8 +239,8 @@ def gen_util_funs(params: BicycleEnvConfig, reverse=False, v_target=None):
 
         nominal_v = jnp.sqrt(x[3] ** 2 + x[4] ** 2)
 
-        projection_curr = _project_to_track(x[0], x[1])
-        projection_next = _project_to_track(x[0] + step * gvx, x[1] + step * gvy)
+        projection_curr, _ = _project_to_track(x[0], x[1], x[7])
+        projection_next, _ = _project_to_track(x[0] + step * gvx, x[1] + step * gvy, x[7])
 
         raw_diff = projection_next.arc_length - projection_curr.arc_length
         track_vel = (raw_diff - track.length * jnp.round(raw_diff / track.length)) / step

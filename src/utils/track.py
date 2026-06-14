@@ -60,6 +60,7 @@ class TrackModel:
         self._segments = np.diff(extended, axis=0)
         self._segment_lengths = np.linalg.norm(self._segments, axis=1)
         self._segment_length_sq = self._segment_lengths * self._segment_lengths
+        self._longest_segment_length_sq = self._segment_length_sq.max()
         self._segment_valid = self._segment_lengths > 1e-9
         self._segment_tangents = self._segments / np.maximum(self._segment_lengths[:, None], 1e-9)
         self._segment_normals = np.stack(
@@ -102,7 +103,7 @@ class TrackModel:
         return float(progress % 1.0) * self.length
 
     def arc_to_progress(self, arc_length: float) -> float:
-        return float((arc_length % self.length) / self.length)
+        return ((arc_length % self.length) / self.length)
 
     def sample(self, progress: float) -> TrackProjection:
         arc = self.progress_to_arc(progress)
@@ -128,36 +129,72 @@ class TrackModel:
             curvature=curvature,
         )
 
-    def project(self, x: float, y: float) -> TrackProjection:
+    def project(self, x: float, y: float, guess: int | None = None) -> tuple[TrackProjection, int]:
+        start = (guess - 5) if guess is not None else 0
+        end = (guess + 5) if guess is not None else len(self.centerline)
+        if start > end:
+            start, end = end, start
+
+        window = np.arange(start, end)
+        segments_window = np.take(
+            self._segments, window, mode="wrap", axis=0
+        )
+        segments_len_window = np.take(
+            self._segment_lengths, window, mode="wrap"
+        )
+        segments_sq_window = np.take(
+            self._segment_length_sq, window, mode="wrap", axis=0
+        )
+        centerline_window = np.take(
+            self.centerline, window, mode="wrap", axis=0
+        )
+        segments_normal_window = np.take(
+            self._segment_normals, window, mode="wrap", axis=0
+        )
+        segments_heading_window = np.take(
+            self._segment_headings, window, mode="wrap", axis=0
+        )
+        valid_window = np.take(
+            self._segment_valid, window, mode="wrap", axis=0
+        )
+
         point = np.asarray([x, y], dtype=float)
-        delta_from_start = point - self.centerline
+        delta_from_start = point - centerline_window
+        print(guess)
         t = np.divide(
-            np.einsum("ij,ij->i", delta_from_start, self._segments),
-            self._segment_length_sq,
-            out=np.zeros_like(self._segment_lengths),
-            where=self._segment_valid,
+            np.einsum("ij,ij->i", delta_from_start, segments_window),
+            segments_sq_window,
+            out=np.zeros_like(segments_sq_window),
+            where=valid_window,
         )
         t = np.clip(t, 0.0, 1.0)
-        projected = self.centerline + self._segments * t[:, None]
+        projected = centerline_window + segments_window * t[:, None]
         delta = point - projected
         distance_sq = np.einsum("ij,ij->i", delta, delta)
-        distance_sq = np.where(self._segment_valid, distance_sq, np.inf)
+        distance_sq = np.where(valid_window, distance_sq, np.inf)
         index = int(np.argmin(distance_sq))
+
         if not np.isfinite(distance_sq[index]):
             raise RuntimeError(f"Unable to project point onto track: ({x}, {y})")
 
-        signed_offset = float(np.dot(point - projected[index], self._segment_normals[index]))
-        arc = float(self._cumulative[index] + t[index] * self._segment_lengths[index])
-        return TrackProjection(
-            progress=self.arc_to_progress(arc),
-            arc_length=arc,
-            x=float(projected[index, 0]),
-            y=float(projected[index, 1]),
-            heading=float(self._segment_headings[index]),
-            lateral_error=signed_offset,
-            curvature=float(
-                np.interp(arc, self._arc_samples, self._curvature_samples, period=self.length)
+        if guess and distance_sq[index] > (self._longest_segment_length_sq + self.width**2):
+            raise RuntimeError(f"Guess {guess} is suspicious")
+
+        signed_offset = float(np.dot(point - projected[index], segments_normal_window[index]))
+        arc = float(self._cumulative[window[index]] + t[index] * segments_len_window[index])
+        return (
+            TrackProjection(
+                progress=self.arc_to_progress(arc),
+                arc_length=arc,
+                x=float(projected[index, 0]),
+                y=float(projected[index, 1]),
+                heading=float(segments_heading_window[index]),
+                lateral_error=signed_offset,
+                curvature=float(
+                    np.interp(arc, self._arc_samples, self._curvature_samples, period=self.length)
+                ),
             ),
+            window[index],
         )
 
     def spawn_pose(

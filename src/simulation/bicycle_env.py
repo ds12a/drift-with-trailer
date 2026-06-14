@@ -122,7 +122,7 @@ class DynamicBicycleModel:
 
         fzr = vehicle.mass * 9.8 * vehicle.lf / (vehicle.lf + vehicle.lr)
         commanded = throttle * vehicle.max_accel - brake * vehicle.max_brake
-        fxr = mu * fzr * jnp.tanh(vehicle.mass * commanded / (fzr * mu) )
+        fxr = mu * fzr * jnp.tanh(vehicle.mass * commanded / (fzr * mu))
 
         fyr = -compute_fy(alpha_r, vehicle.cornering_stiffness_rear, fzr, fxr, mu, vehicle.gamma)
 
@@ -304,6 +304,7 @@ class BicycleEnv(gym.Env):
         self._previous_feature_state = None
         self._step_count = 0
         self._lap_count = 0
+        self._last_index = None
 
         obs = self._observation()
         info = {
@@ -358,9 +359,10 @@ class BicycleEnv(gym.Env):
             "render_state": render_state,
             "lap_count": self._lap_count,
         }
-        terminated = self.track.out_of_bounds(
-            self.track.project(self._state.x, self._state.y).lateral_error
+        projection, self._last_index = self.track.project(
+            self._state.x, self._state.y, self._last_index
         )
+        terminated = self.track.out_of_bounds(projection.lateral_error)
         return self._observation(), 0, terminated, False, info
 
     def render(self):

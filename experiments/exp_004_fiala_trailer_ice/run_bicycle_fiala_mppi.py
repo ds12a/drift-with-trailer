@@ -41,10 +41,10 @@ def run_mpc(scenario, reverse=False):
         bound,
         jnp.diag(jnp.array([0.25, 1])),
         inverse_temp=1e-1,
-        K=300,
+        K=1000,
         gamma=0.1,
         step=0.05,
-        T=75,
+        T=100,
     )
 
     observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
@@ -56,7 +56,7 @@ def run_mpc(scenario, reverse=False):
 
             state: VehicleState = env.unwrapped._state
 
-            mpc_state = jnp.array([state.x, state.y, state.yaw, state.vx, state.vy, state.yaw_rate, env.unwrapped.track.find_mu(state.x, state.y)])
+            mpc_state = jnp.array([state.x, state.y, state.yaw, state.vx, state.vy, state.yaw_rate, env.unwrapped.track.find_mu(state.x, state.y), env.unwrapped._last_index])
 
             u = mpc.run_mpc(mpc_state)
             u.block_until_ready()

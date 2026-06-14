@@ -6,7 +6,7 @@ import time
 import cv2
 from gymnasium.wrappers import RecordVideo
 from src.simulation.trailer_bicycle_env import TrailerBicycleEnv
-from dataclasses import astuple 
+from dataclasses import astuple
 import jax.numpy as jnp
 
 from jax import config
@@ -25,7 +25,6 @@ def run_mpc(scenario, reverse=False):
 
     env = RecordVideo(env, video_folder="gym_videos", episode_trigger=lambda x: True)
 
-
     env.reset()
 
     params = build_nominal_jax_params(
@@ -43,10 +42,10 @@ def run_mpc(scenario, reverse=False):
         bound,
         jnp.diag(jnp.array([0.125, 1])),
         inverse_temp=1e-3,
-        K=320,
+        K=1000,
         gamma=0.1,
         step=0.05,
-        T=55,
+        T=75,
     )
 
     observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
@@ -59,8 +58,14 @@ def run_mpc(scenario, reverse=False):
             state: VehicleState = env.unwrapped._state
 
             # David why is this JNP? why not
-            mpc_state = jnp.array(astuple(state)[:-2])
-            mpc_state = jnp.append(mpc_state, env.unwrapped.track.find_mu(state.x, state.y))
+            # aaron i fixed the syntax
+            mpc_state = jnp.array(
+                [
+                    *astuple(state)[:-2],
+                    env.unwrapped.track.find_mu(state.x, state.y),
+                    env.unwrapped._last_index,
+                ]
+            )
 
             u = mpc.run_mpc(mpc_state)
             u.block_until_ready()
