@@ -59,7 +59,7 @@ def main():
     ap.add_argument("--T", type=int, default=Config.T)
     ap.add_argument("--max-steps", type=int, default=Config.max_steps)
     ap.add_argument("--n-starts", type=int, default=Config.n_starts)
-    ap.add_argument("--v-target-kmh", type=float, default=Config.v_target_kmh,
+    ap.add_argument("--v-target", type=float, default=Config.v_target,
                     help="target speed in km/h; pass a negative number for None (max-speed mode)")
     ap.add_argument("--reverse", action="store_true")
     ap.add_argument("--smoke", action="store_true", help="1 trial, tiny budget, sanity check")
@@ -68,8 +68,8 @@ def main():
     cfg = Config(
         K=args.K, T=args.T, max_steps=args.max_steps, n_starts=args.n_starts,
         reverse=args.reverse,
-        v_target_kmh=(None if args.v_target_kmh is not None and args.v_target_kmh < 0
-                      else args.v_target_kmh),
+        v_target=(None if args.v_target is not None and args.v_target < 0
+                      else args.v_target),
     )
     if args.smoke:
         cfg.max_steps, cfg.n_starts, args.trials = 80, 1, 1
@@ -79,7 +79,7 @@ def main():
         storage=args.storage,
         direction="maximize",
         load_if_exists=True,
-        sampler=optuna.samplers.CmaEsSampler(seed=0, multivariate=True),
+        sampler=optuna.samplers.CmaEsSampler(),
         pruner=optuna.pruners.MedianPruner(n_warmup_steps=cfg.max_steps // 3),
     )
 
