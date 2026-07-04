@@ -76,7 +76,7 @@ def run_mpc(
     )
 
     if controller == "MPPI":
-        ctl_args = (6, 2, dynamics, None, cost, bound, *ctl_args)
+        ctl_args = (7, 2, dynamics, None, cost, bound, *ctl_args)
         
         if debug:
             # print("Using MPPI")
@@ -85,7 +85,7 @@ def run_mpc(
             mpc = MPPI_Jax(*ctl_args, **ctl_kwargs)
     else:
         # Assume SMPPI
-        ctl_args = (6, 2, dynamics, None, cost, bound, bound_der, *ctl_args)
+        ctl_args = (7, 2, dynamics, None, cost, bound, bound_der, *ctl_args)
 
         if debug:
             # print("Using SMPPI")
