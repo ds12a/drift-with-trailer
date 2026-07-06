@@ -44,3 +44,4 @@ The smoke simulation is intentionally simple. It only checks that the Python env
 - [Task 004: Fiala Racecar, Trailer, and Ice Patches](docs/tasks/004_fiala_trailer_ice_mppi.md)
 - [Task 005: Trailer MPPI Under Model Mismatch](docs/tasks/005_trailer_model_mismatch_mppi.md)
 - [Task 006: Online Learned CartPole Dynamics for MPPI](docs/tasks/006_online_learned_cartpole_mppi.md)
+- [Task 007: Vehicle Residual Dynamics Learning for MPPI](docs/tasks/007_vehicle_residual_dynamics_mppi.md)
