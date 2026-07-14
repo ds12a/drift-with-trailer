@@ -1,10 +1,13 @@
 import numpy as np
 import jax
 
+
 class Data:
 
-    def __init__(self, batch_size, state_mean, state_std, dynamics_mean, dynamics_std, horizon_len=4):
-        
+    def __init__(
+        self, batch_size, state_mean, state_std, dynamics_mean, dynamics_std, horizon_len=4
+    ):
+
         # State, dynamics 3D array size (run idx, timestep, data)
         self.states = []
         self.dynamics = []
@@ -59,7 +62,7 @@ class Data:
         batch_perm = perm.reshape((B, self.batch_size))
 
         traj_len_prefix = np.cumsum(np.insert(self.true_traj_len_buffer, 0, 0))
-        traj_indices = np.searchsorted(traj_len_prefix[1:], batch_perm, side='right')
+        traj_indices = np.searchsorted(traj_len_prefix[1:], batch_perm, side="right")
         offset = batch_perm - traj_len_prefix[traj_indices]
 
         batched_states = np.zeros((B, self.batch_size, h * s))
@@ -82,7 +85,8 @@ class Data:
         dynamics = (dynamics - self.dynamics_mean) / self.dynamics_std
 
         return states, dynamics
-    
+
+
 if __name__ == "__main__":
     data = Data(4, np.ones(4), np.ones(4), np.ones(5), np.ones(5), 4)
 
