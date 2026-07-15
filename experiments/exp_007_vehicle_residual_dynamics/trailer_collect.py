@@ -15,7 +15,7 @@ import itertools
 import jax.numpy as jnp
 
 from src.learning.datasets.trailer_data import Data
-from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs
+from experiments.exp_007_vehicle_residual_dynamics.util_fns import gen_util_funs
 import pickle
 
 from src.simulation.config.trailer_bicycle_config import (
@@ -37,43 +37,60 @@ def build_planner_debug(all_samples, n_vis):
     return {"candidate_xy": cand}
 
 
+# state output : [sin(hitch), cos(hitch), vx, vy, truck_yaw_rate, yaw_trailer_rate, mu, delta, brake/accel]
+# dynamics output: [...]
+# x, y, phi_1, phi_2, v_1x, v_1y, phi_1_dot, phi_2_dot, mu, arc_len = state input
+def convert(xhist, uhist, dt):
+
+    # Trimming as otherwise there is too much data
+    xhist = xhist[:10, ...]
+    uhist = uhist[:10, ...]
+
+    B = xhist.shape[0]
+    T = xhist.shape[1]
+
+    hitch = xhist[..., 2] - xhist[..., 3]
+    sh = np.sin(hitch)
+    ch = np.cos(hitch)
+
+    in_state_clean = np.concatenate([sh[... ,None], ch[..., None], xhist[..., 4:9]], axis=-1)
+    states = np.concatenate([in_state_clean[:, :-1, :], uhist[:, :-1, :]], axis=-1)
+    dynamics = (in_state_clean[:, 1:, :] - in_state_clean[:, :-1, :])[..., :-1] / dt
+
+    return states, dynamics
+
 # Controller generalized mpc to support other predefined actions
 def run_controller(
     controller,
+    data,
     max_steps=None,
     headless=False,
 ):
 
     warnings.filterwarnings("ignore", module="gymnasium")
 
-    states = [[]]
-    dynamics = [[]]
 
-    data = Data()
-
-    if env_kwargs is None:
-        env_kwargs = {
-            "renderer": "pybullet",
-            "render_mode": "rgb_array_birds_eye",
-            "render_width": 600,
-            "render_height": 400,
-        }
+    env_kwargs = {
+        "renderer": "pybullet",
+        "render_mode": "rgb_array_birds_eye",
+        "render_width": 600,
+        "render_height": 400,
+    }
     env = TrailerBicycleEnv(**env_kwargs)
+
+    env.reset()
 
     observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
 
     loop = range(max_steps) if max_steps is not None else itertools.count()
 
     i = 0
-    nn_state = None
+    # nn_state = None
 
     try:
         for i in loop:
             if terminated:
                 env.reset()
-                states.append([])
-                dynamics.append([])
-                nn_state = None
 
             state: VehicleState = env.unwrapped._state
 
@@ -85,10 +102,13 @@ def run_controller(
                 ]
             )
 
-            u = controller.run_mpc(mpc_state)
-            i += 1
 
-            action = jnp.array([u[0], u[1]])
+            u, xhist, vhist = controller.run_mpc(mpc_state)
+            
+            for state_i, dynamics_i in zip(*convert(xhist, vhist, env.scenario.simulation.dt)):
+                data.add(state_i, dynamics_i)
+    
+            action = np.array([u[0], u[1]])
 
             observation, reward, terminated, truncated, info = env.step(action)
 
@@ -97,40 +117,20 @@ def run_controller(
                 cv2.imshow("sim", frame[..., ::-1])
                 cv2.waitKey(1)
 
-            next_nn_state = [
-                state.yaw_truck - state.yaw_trailer,  # alpha
-                *astuple(state)[4:-2],  # vx, vy, yaw_truck_rate, yaw_trailer_rate
-                env.unwrapped.track.mu,
-                u[0],
-                u[1],
-            ]
-
-            if nn_state:
-                dynamics[-1].append(
-                    [
-                        next_state - curr_state
-                        for next_state, curr_state in zip(next_nn_state, nn_state)[:-3]
-                    ]
-                )
-
-            nn_state = next_nn_state
-
-            state[-1].append(nn_state)
-
     except KeyboardInterrupt:
         pass
 
     env.close()
 
-    return state, dynamics
+    # return state, dynamics
 
 def build_controller(config):
     scenario = TrailerBicycleEnvConfig(
         "scenario", TrackConfig(), VehicleConfig(), SimulationConfig()
     )
 
-    dynamics, cost, bound, _ = gen_util_funs(scenario, **cost_kwargs)
     ctl_args, ctl_kwargs, cost_kwargs = config
+    dynamics, cost, bound, _ = gen_util_funs(scenario, **cost_kwargs)
     ctl_args = (6, 2, dynamics, None, cost, bound, *ctl_args)
 
     return MPPI_Jax_Debug(*ctl_args, **ctl_kwargs)
@@ -179,18 +179,33 @@ mppi_cfg_rev = (
     },
 )
 
-data = Data(-12252023, jnp.zeros(8), jnp.ones(8), jnp.zeros(5), jnp.ones(5))
+# State is: 
+# [sin(hitch), cos(hitch), vx, vy, truck_yaw_rate, yaw_trailer_rate, mu, delta, brake/accel]
+#
+# Dynamics are dState/dt
+# [hitch_rate, ...]
 
-runs = [
-    (build_controller(mppi_cfg_fwd), 0, jnp.sin(jnp.)) # controller, gaussian noise mag, sin freq, sin amp
-    (build_controller(mppi_cfg_fwd), 0.01)
-    (build_controller(mppi_cfg_fwd), 0.1)
-]
+data = Data(
+    256, 
+    np.array([0, 0, 10, 0, 0, 0, 0.8, 0, 0]), 
+    np.array([0.4, 0.2, 17.3, 1.5, 0.35, 0.35, 0.1, 0.4, 0.4]), 
+    np.zeros(6), 
+    np.array([0.4, 0.4, 1.5, 1.5, 0.8, 0.8]),
+)
+
+# runs = [ 
+#     (build_controller(mppi_cfg_fwd), 0, jnp.sin(jnp.)), # controller, gaussian noise mag, sin freq, sin amp
+#     (build_controller(mppi_cfg_fwd), 0.01),
+#     (build_controller(mppi_cfg_fwd), 0.1),
+# ]
+
+controllers = [build_controller(mppi_cfg_fwd), build_controller(mppi_cfg_rev)]
 
 for c in controllers:
-    state, dynamics = run_controller(c, 5000, False)
+    run_controller(c, data, 50, False)
 
-    for s, d in zip(state, dynamics):
-        data.add(s, d)
+    # for s, d in zip(state, dynamics):
+    #     data.add(s, d)
 
-pickle.dump(data, "experiments/exp_007_vehicle_residual_dynamics/data.pkl")
+with open("experiments/exp_007_vehicle_residual_dynamics/data.pkl", "wb") as f:
+    pickle.dump(data, f)
