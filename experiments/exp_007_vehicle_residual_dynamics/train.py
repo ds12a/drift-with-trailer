@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
+from pathlib import Path
 from flax import nnx
 from src.learning.datasets.trailer_data import Data
 from src.learning.models.trailer_nn import TrailerModel
@@ -52,15 +54,22 @@ pred_batch = jax.jit(jax.vmap(dynamics))
 
 
 @nnx.jit
-def loss_fn(model, batch):
+def loss_fn(model, batch, dyn_mean, dyn_std, state_mean, state_std):
     x, y = batch
-    pred = pred_batch(x.reshape(-1, 9)).reshape(y.shape)
-    return ((model(x) - (y - pred)) ** 2).mean()
+
+    true_y = y * dyn_std + dyn_mean
+    last_x = x[:, -9:] # TODO for safety, hardcoding is probably bad here
+    true_x = last_x * state_std + state_mean
+
+    pred = pred_batch(true_x.reshape(-1, 9)).reshape(y.shape)
+    true_res = true_y - pred
+    norm_res = (true_res - dyn_mean) / dyn_std
+    return ((model(x) - norm_res) ** 2).mean()
 
 
 @nnx.jit
-def train_step(model, optimizer, metrics, batch):
-    loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
+def train_step(model, optimizer, metrics, batch, dyn_mean, dyn_std, state_mean, state_std):
+    loss, grads = nnx.value_and_grad(loss_fn)(model, batch, dyn_mean, dyn_std, state_mean, state_std)
     optimizer.update(model, grads)
     metrics.update(loss=loss)
 
@@ -81,7 +90,7 @@ class LearnedDynamics:
         state_std,
         dynamics_mean,
         dynamics_std,
-        optimizer_params={"learning_rate": 0.05},
+        optimizer_params={"learning_rate": 1e-3},
     ):
         self.model = model
         self.state_std = state_std
@@ -99,46 +108,73 @@ class LearnedDynamics:
         norm = (full_state - self.state_mean) / self.state_std
         return dynamics(full_state) + self._unnormalize(self.model(norm))
 
-    def train(self, epochs, checkpoint_freq=50):
-        for i in range(epochs):
+    def train(self, epochs, checkpoint_freq=5):
+
+        best = None
+
+        for e in range(epochs):
             train, test = self.data.get_data()
 
-            for batch in zip(*train):
-                train_step(self.model, self.optimizer, self.metrics, batch)
-
+            for i, batch in enumerate(train):
+                # print(f"\rTrain Batch {i}", end="")
+                train_step(self.model, self.optimizer, self.metrics, batch, self.data.dynamics_mean, self.data.dynamics_std, self.data.state_mean, self.data.state_std)
+            
             self.loss_history.append(self.metrics.compute())
             self.metrics.reset()
 
-            for batch in zip(*test):
-                self.metrics.update(loss=loss_fn(self.model, batch))
+            for i, batch in enumerate(test):
+                # print(f"\rTrain done, Test Batch {i}", end="")
+                self.metrics.update(loss=loss_fn(self.model, batch, self.data.dynamics_mean, self.data.dynamics_std, self.data.state_mean, self.data.state_std))
 
             self.test_loss_history.append(self.metrics.compute())
             self.metrics.reset()
 
-            print(f"Epoch {i}\tTrain: {self.loss_history[-1]}\tTest: {self.test_loss_history[-1]}")
+            print(f"\rEpoch {e}\t Train loss: {self.loss_history[-1]}\tTest loss: {self.test_loss_history[-1]}\tTest RMSE: {np.sqrt(self.test_loss_history[-1])}")
 
-            if i > 0 and i % checkpoint_freq == 0:
+            if e > 0 and e % checkpoint_freq == 0:
                 self.save()
+
+                if best is None or self.test_loss_history[-1] < best:
+                    self.save(output="src/learning/models/trained/trailer-best")
+
+
 
     def _unnormalize(self, dynamics):
         return dynamics * self.dynamics_std + self.dynamics_mean
+    
+    def save(self, output="src/learning/models/trained/trailer"):
+        graphdef, state = nnx.split(self.model)
+        checkpointer = ocp.StandardCheckpointer()
+        checkpointer.save(Path.cwd() / output, state, force=True)
+        checkpointer.wait_until_finished()
 
-    def save(self, output="src/learning/models/trained/trailer.pkl"):
-        with open(output, "wb") as f:
-            pickle.dump(self.model, f)
-
-    def load(self, source="src/learning/models/trained/trailer.pkl"):
-        with open(source, "rb") as f:
-            self.model = pickle.load(f)
-
+    def load(self, source="src/learning/models/trained/trailer"):
+        graphdef, state = nnx.split(self.model)
+        checkpointer = ocp.StandardCheckpointer()
+        restored_state = checkpointer.restore(source, state)
+        nnx.update(self.model, restored_state)
 
 params = TrailerBicycleEnvConfig("scenario", TrackConfig(), VehicleConfig(), SimulationConfig())
 
 
-learned = LearnedDynamics(
-    TrailerModel(9, 6), 64, jnp.zeros(9), jnp.ones(9), jnp.zeros(6), jnp.ones(6)
-)
 
-learned.data = pickle.load()  # TODO
+if __name__ == "__main__":
 
-learned.train(1000)
+    learned = LearnedDynamics(
+        TrailerModel(36, 6), 4096, 
+        np.array([0, 0, 10, 0, 0, 0, 0.8, 0, 0]), 
+        np.array([0.4, 0.2, 17.3, 1.5, 0.35, 0.35, 0.1, 0.4, 0.4]), 
+        np.zeros(6), 
+        np.array([0.4, 0.4, 1.5, 1.5, 0.8, 0.8]),
+    )
+
+    with open("./experiments/exp_007_vehicle_residual_dynamics/data.pkl", "rb") as f:
+        learned.data = pickle.load(f) 
+
+    print("Opened pickle")
+    print(f"Dataset has {len(learned.data)} samples")
+    learned.data.batch_size = 4096
+
+    learned.train(500)
+
+    learned.save()

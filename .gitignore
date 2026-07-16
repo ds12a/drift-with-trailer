@@ -37,3 +37,4 @@ src/learning/datasets/processed/
 gym_videos
 
 *.json
+src/learning/models/trained/

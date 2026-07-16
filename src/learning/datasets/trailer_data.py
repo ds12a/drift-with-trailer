@@ -13,7 +13,6 @@ class Data:
         dynamics_mean,
         dynamics_std,
         horizon_len=4,
-        train=0.4,
     ):
 
         # State, dynamics 3D array size (run idx, timestep, data)
@@ -30,10 +29,6 @@ class Data:
         self.batch_size = batch_size
         self.horizon_len = horizon_len
         self.key = jax.random.PRNGKey(1)
-
-        self.train_frac = train
-        self.train_idx = np.empty(0, dtype=int)
-        self.test_idx = np.empty(0, dtype=int)
 
     def __len__(self):
 
@@ -55,21 +50,45 @@ class Data:
         self.traj_len.append(len(state))
         self.n += len(state)
 
-        n_new = len(self)
-        self.key, subkey = jax.random.split(self.key)
-        new = np.array(jax.random.permutation(subkey, np.arange(n_old, n_new)))
-        k = int(round(self.train_frac * len(new)))
-        self.train_idx = np.concatenate([self.train_idx, new[:k]]).astype(int)
-        self.test_idx = np.concatenate([self.test_idx, new[k:]]).astype(int)
+    def get_data(self, train_test=0.7):
 
-    def get_data(self):
-        len(self)  # refresh true_traj_len_buffer
+        if not getattr(self, '_is_compiled', False):
+            self._compile_dataset()
+
+        n = len(self)  # refresh true_traj_len_buffer
+
+        fixed_key = jax.random.PRNGKey(137)
+        all = np.array(jax.random.permutation(fixed_key, n))
+
+        split_idx = int(n * train_test)
+        train_indices = all[:split_idx]
+        test_indices = all[split_idx:]
 
         self.key, k1, k2 = jax.random.split(self.key, 3)
-        train = np.array(jax.random.permutation(k1, self.train_idx))
-        test = np.array(jax.random.permutation(k2, self.test_idx))
+        train = np.array(jax.random.permutation(k1, train_indices))
+        test = np.array(jax.random.permutation(k2, test_indices))
 
         return self._batch(train), self._batch(test)
+    
+    def _compile_dataset(self):
+        """
+        Flattens ragged trajectories into contiguous memory
+        """
+        print("Flattening dataset")
+        
+        self.flat_states = np.concatenate(self.states, axis=0).astype(np.float32)
+        self.flat_dynamics = np.concatenate(self.dynamics, axis=0).astype(np.float32)
+        valid_starts = []
+        current_idx = 0
+        for length in self.traj_len:
+            if length >= self.horizon_len:
+                starts = np.arange(current_idx, current_idx + length - self.horizon_len + 1)
+                valid_starts.append(starts)
+            current_idx += length
+        
+        self.valid_starts = np.concatenate(valid_starts)
+        self._is_compiled = True
+        print(f"Compilation complete. {len(self.valid_starts)} valid windows available.")
 
     def _batch(self, perm):
         s = len(self.states[0][0])
@@ -82,24 +101,37 @@ class Data:
         B = len(perm) // self.batch_size
         batch_perm = perm.reshape((B, self.batch_size))
 
-        traj_len_prefix = np.cumsum(np.insert(self.true_traj_len_buffer, 0, 0))
-        traj_indices = np.searchsorted(traj_len_prefix[1:], batch_perm, side="right")
-        offset = batch_perm - traj_len_prefix[traj_indices]
+        # traj_len_prefix = np.cumsum(np.insert(self.true_traj_len_buffer, 0, 0))
+        # traj_indices = np.searchsorted(traj_len_prefix[1:], batch_perm, side="right")
+        # offset = batch_perm - traj_len_prefix[traj_indices]
 
-        batched_states = np.zeros((B, self.batch_size, h * s))
-        batched_dynamics = np.zeros((B, self.batch_size, h * d))
+        window_offsets = np.arange(h)
+
+        # batched_states = np.zeros((B, self.batch_size, h * s))
+        # batched_dynamics = np.zeros((B, self.batch_size, h * d))
 
         for b in range(B):
-            for i in range(self.batch_size):
-                t_idx = traj_indices[b, i]
-                o_idx = offset[b, i]
-                st_window = self.states[t_idx][o_idx : o_idx + h]
-                dy_window = self.dynamics[t_idx][o_idx : o_idx + h]
 
-                batched_states[b, i] = st_window.ravel()
-                batched_dynamics[b, i] = dy_window.ravel()
+            starts = self.valid_starts[batch_perm[b]]
+            window_indices = starts[:, None] + window_offsets
+            batch_states = self.flat_states[window_indices].reshape(self.batch_size, h * s)
+            batch_dynamics = self.flat_dynamics[starts + h - 1]
 
-        return batched_states, batched_dynamics
+            # batch_states = np.zeros((self.batch_size, h * s), dtype=np.float32)
+            # batch_dynamics = np.zeros((self.batch_size, d), dtype=np.float32)
+
+            # for i in range(self.batch_size):
+            #     t_idx = traj_indices[b, i]
+            #     o_idx = offset[b, i]
+                
+            #     st_window = self.states[t_idx][o_idx : o_idx + h]
+            #     batch_dynamics[i] = self.dynamics[t_idx][o_idx + h - 1]
+
+            #     batch_states[i] = st_window.ravel()
+            #     # batch_dynamics[i] = dy_window.ravel()
+
+            # So my gpu does not die
+            yield batch_states, batch_dynamics
 
     def _normalize(self, states, dynamics):
         states = (states - self.state_mean) / self.state_std
@@ -123,8 +155,6 @@ class Data:
             "dynamics": [np.asarray(d).tolist() for d in self.dynamics],
             # Convert JAX PRNGKey to a list of integers
             "key": np.asarray(self.key).tolist(),
-            "train_idx": self.train_idx.tolist(),
-            "test_idx": self.test_idx.tolist(),
         }
 
         with open(filepath, "w") as f:
@@ -152,7 +182,5 @@ class Data:
         obj.states = [np.array(s) for s in data_dict["states"]]
         obj.dynamics = [np.array(d) for d in data_dict["dynamics"]]
         obj.key = jax.numpy.array(data_dict["key"])
-        obj.train_idx = np.array(data_dict["train_idx"], dtype=int)
-        obj.test_idx = np.array(data_dict["test_idx"], dtype=int)
 
         return obj
