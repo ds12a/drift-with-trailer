@@ -1,11 +1,19 @@
 import numpy as np
 import jax
+import json
 
 
 class Data:
 
     def __init__(
-        self, batch_size, state_mean, state_std, dynamics_mean, dynamics_std, horizon_len=4
+        self,
+        batch_size,
+        state_mean,
+        state_std,
+        dynamics_mean,
+        dynamics_std,
+        horizon_len=4,
+        train=0.4,
     ):
 
         # State, dynamics 3D array size (run idx, timestep, data)
@@ -23,6 +31,10 @@ class Data:
         self.horizon_len = horizon_len
         self.key = jax.random.PRNGKey(1)
 
+        self.train_frac = train
+        self.train_idx = np.empty(0, dtype=int)
+        self.test_idx = np.empty(0, dtype=int)
+
     def __len__(self):
 
         true_traj_len = [max(i + 1 - self.horizon_len, 0) for i in self.traj_len]
@@ -34,6 +46,7 @@ class Data:
         """
         Assuming 2D input (a whole trajectory history)
         """
+        n_old = len(self)
 
         state, dynamics = self._normalize(state, dynamics)
 
@@ -42,21 +55,29 @@ class Data:
         self.traj_len.append(len(state))
         self.n += len(state)
 
-    def get_data(self):
-        """
-        Must generate horizion accumulation before returning
-        """
-
+        n_new = len(self)
         self.key, subkey = jax.random.split(self.key)
+        new = np.array(jax.random.permutation(subkey, np.arange(n_old, n_new)))
+        k = int(round(self.train_frac * len(new)))
+        self.train_idx = np.concatenate([self.train_idx, new[:k]]).astype(int)
+        self.test_idx = np.concatenate([self.test_idx, new[k:]]).astype(int)
 
+    def get_data(self):
+        len(self)  # refresh true_traj_len_buffer
+
+        self.key, k1, k2 = jax.random.split(self.key, 3)
+        train = np.array(jax.random.permutation(k1, self.train_idx))
+        test = np.array(jax.random.permutation(k2, self.test_idx))
+
+        return self._batch(train), self._batch(test)
+
+    def _batch(self, perm):
         s = len(self.states[0][0])
         d = len(self.dynamics[0][0])
         h = self.horizon_len
 
-        n = len(self)
-
-        leftover = n % self.batch_size
-        perm = np.array(jax.random.permutation(subkey, n)[leftover:])
+        leftover = len(perm) % self.batch_size
+        perm = perm[leftover:]
 
         B = len(perm) // self.batch_size
         batch_perm = perm.reshape((B, self.batch_size))
@@ -85,10 +106,9 @@ class Data:
         dynamics = (dynamics - self.dynamics_mean) / self.dynamics_std
 
         return states, dynamics
-    
+
     def dump_json(self, filepath: str):
-        import json
-        
+
         # Convert internal arrays to list
         data_dict = {
             "batch_size": self.batch_size,
@@ -102,18 +122,20 @@ class Data:
             "states": [np.asarray(s).tolist() for s in self.states],
             "dynamics": [np.asarray(d).tolist() for d in self.dynamics],
             # Convert JAX PRNGKey to a list of integers
-            "key": np.asarray(self.key).tolist()
+            "key": np.asarray(self.key).tolist(),
+            "train_idx": self.train_idx.tolist(),
+            "test_idx": self.test_idx.tolist(),
         }
-        
-        with open(filepath, 'w') as f:
+
+        with open(filepath, "w") as f:
             json.dump(data_dict, f)
 
     @classmethod
     def load_json(cls, filepath: str):
         """Loads a Data object from a JSON file."""
         import json
-        
-        with open(filepath, 'r') as f:
+
+        with open(filepath, "r") as f:
             data_dict = json.load(f)
 
         obj = cls(
@@ -122,13 +144,15 @@ class Data:
             state_std=np.array(data_dict["state_std"]),
             dynamics_mean=np.array(data_dict["dynamics_mean"]),
             dynamics_std=np.array(data_dict["dynamics_std"]),
-            horizon_len=data_dict["horizon_len"]
+            horizon_len=data_dict["horizon_len"],
         )
-        
+
         obj.n = data_dict["n"]
         obj.traj_len = data_dict["traj_len"]
         obj.states = [np.array(s) for s in data_dict["states"]]
         obj.dynamics = [np.array(d) for d in data_dict["dynamics"]]
         obj.key = jax.numpy.array(data_dict["key"])
-        
+        obj.train_idx = np.array(data_dict["train_idx"], dtype=int)
+        obj.test_idx = np.array(data_dict["test_idx"], dtype=int)
+
         return obj
