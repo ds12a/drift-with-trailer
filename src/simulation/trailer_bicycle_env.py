@@ -403,6 +403,8 @@ class TrailerBicycleEnv(gym.Env):
         self._lap_count = 0
         self._last_index = None
 
+        _, self._last_index = self.track.project(self._state.x, self._state.y, None)
+
         obs = self._observation()
         info = {
             "state": self._render_state(),

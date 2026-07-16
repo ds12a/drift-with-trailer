@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import jax
 from jax.typing import ArrayLike
 import numpy as np
-import torch
+# import torch
 import functools
 
 
@@ -53,13 +53,13 @@ def rollout(
 
         new_carry = new_x, new_S, new_i
 
-        return new_carry, (new_x, new_S)
+        return new_carry, (new_x, new_S, v)
 
-    (x, S, _), (xhist, _) = jax.lax.scan(step_dynamics, (x, 0, 0), (u, v, bounded_noise))
+    (x, S, _), (xhist, _, vhist) = jax.lax.scan(step_dynamics, (x, 0, 0), (u, v, bounded_noise))
 
     if term_cost:
         S += term_cost(x, u[-1])
-    return S, xhist
+    return S, xhist, vhist
 
 
 @functools.partial(
@@ -81,7 +81,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
     key, subkey = jax.random.split(key)
     noise = jax.random.normal(subkey, u_batch.shape) * jnp.sqrt(jnp.diag(cv))
 
-    costs, bounded_noise, xhist = forward_sim(x_batch, u_batch, noise)
+    costs, bounded_noise, xhist, uhist = forward_sim(x_batch, u_batch, noise)
 
     weights = jnp.exp(-(costs - costs.min()) / inverse_temp)
     weights = weights / weights.sum()
@@ -89,7 +89,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
     weighted_noise = jnp.sum(weights.reshape(-1, 1, 1) * bounded_noise, axis=0)
     u = u + weighted_noise
 
-    return u, key, xhist
+    return u, key, xhist, uhist
 
 
 class MPPI_Jax_Debug:
@@ -174,7 +174,7 @@ class MPPI_Jax_Debug:
         v = self.bound_control(v)
         noise = v - u
 
-        S, xhist = rollout(
+        S, xhist, vhist = rollout(
             x,
             u,
             noise,
@@ -187,7 +187,7 @@ class MPPI_Jax_Debug:
             self.step,
         )
 
-        return S, noise, xhist
+        return S, noise, xhist, vhist
 
     def run_mpc(self, x: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
         """
@@ -200,7 +200,7 @@ class MPPI_Jax_Debug:
             torch.Tensor: Control output
         """
 
-        u, self.key, xhist = mpc_step(
+        u, self.key, xhist, vhist = mpc_step(
             x,
             self.last_trajectory,
             self.u_d,
@@ -219,4 +219,4 @@ class MPPI_Jax_Debug:
         # self.u_history = self.u_history.at[-1].set(u[0])
         self.last_trajectory = u
 
-        return u[0], xhist
+        return u[0], xhist, vhist
