@@ -118,7 +118,7 @@ def run_mpc(
 
             xhist = None
             if debug:
-                u, xhist = mpc.run_mpc(mpc_state)
+                u, xhist, *_ = mpc.run_mpc(mpc_state)
             else:
                 u = mpc.run_mpc(mpc_state)
             

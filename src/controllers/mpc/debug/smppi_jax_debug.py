@@ -6,7 +6,7 @@ for debugging purposes
 import jax.numpy as jnp
 import jax
 from jax.typing import ArrayLike
-import torch
+# import torch
 import functools
 
 
@@ -212,7 +212,7 @@ class SMPPI_Jax_Debug:
 
         return S, noise, xhist
 
-    def run_mpc(self, x: ArrayLike) -> torch.Tensor:
+    def run_mpc(self, x: ArrayLike): # -> torch.Tensor:
         """
         Runs a single MPC solve.
 

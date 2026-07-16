@@ -85,13 +85,50 @@ class Data:
         dynamics = (dynamics - self.dynamics_mean) / self.dynamics_std
 
         return states, dynamics
+    
+    def dump_json(self, filepath: str):
+        import json
+        
+        # Convert internal arrays to list
+        data_dict = {
+            "batch_size": self.batch_size,
+            "horizon_len": self.horizon_len,
+            "n": self.n,
+            "traj_len": self.traj_len,
+            "state_mean": np.asarray(self.state_mean).tolist(),
+            "state_std": np.asarray(self.state_std).tolist(),
+            "dynamics_mean": np.asarray(self.dynamics_mean).tolist(),
+            "dynamics_std": np.asarray(self.dynamics_std).tolist(),
+            "states": [np.asarray(s).tolist() for s in self.states],
+            "dynamics": [np.asarray(d).tolist() for d in self.dynamics],
+            # Convert JAX PRNGKey to a list of integers
+            "key": np.asarray(self.key).tolist()
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(data_dict, f)
 
+    @classmethod
+    def load_json(cls, filepath: str):
+        """Loads a Data object from a JSON file."""
+        import json
+        
+        with open(filepath, 'r') as f:
+            data_dict = json.load(f)
 
-if __name__ == "__main__":
-    data = Data(4, np.ones(4), np.ones(4), np.ones(5), np.ones(5), 4)
-
-    N = [10, 50, 1, 3, 5]
-    for n in N:
-        data.add(np.zeros((n, 4)), np.zeros((n, 5)))
-
-    print(data.get_data()[0].shape)
+        obj = cls(
+            batch_size=data_dict["batch_size"],
+            state_mean=np.array(data_dict["state_mean"]),
+            state_std=np.array(data_dict["state_std"]),
+            dynamics_mean=np.array(data_dict["dynamics_mean"]),
+            dynamics_std=np.array(data_dict["dynamics_std"]),
+            horizon_len=data_dict["horizon_len"]
+        )
+        
+        obj.n = data_dict["n"]
+        obj.traj_len = data_dict["traj_len"]
+        obj.states = [np.array(s) for s in data_dict["states"]]
+        obj.dynamics = [np.array(d) for d in data_dict["dynamics"]]
+        obj.key = jax.numpy.array(data_dict["key"])
+        
+        return obj

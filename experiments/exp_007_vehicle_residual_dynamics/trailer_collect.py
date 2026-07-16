@@ -17,6 +17,7 @@ import jax.numpy as jnp
 from src.learning.datasets.trailer_data import Data
 from experiments.exp_007_vehicle_residual_dynamics.util_fns import gen_util_funs
 import pickle
+import jax
 
 from src.simulation.config.trailer_bicycle_config import (
     TrailerBicycleEnvConfig, 
@@ -40,21 +41,22 @@ def build_planner_debug(all_samples, n_vis):
 # state output : [sin(hitch), cos(hitch), vx, vy, truck_yaw_rate, yaw_trailer_rate, mu, delta, brake/accel]
 # dynamics output: [...]
 # x, y, phi_1, phi_2, v_1x, v_1y, phi_1_dot, phi_2_dot, mu, arc_len = state input
+@jax.jit
 def convert(xhist, uhist, dt):
 
     # Trimming as otherwise there is too much data
-    xhist = xhist[:10, ...]
-    uhist = uhist[:10, ...]
+    xhist = xhist[:3, ...]
+    uhist = uhist[:3, ...]
 
     B = xhist.shape[0]
     T = xhist.shape[1]
 
     hitch = xhist[..., 2] - xhist[..., 3]
-    sh = np.sin(hitch)
-    ch = np.cos(hitch)
+    sh = jnp.sin(hitch)
+    ch = jnp.cos(hitch)
 
-    in_state_clean = np.concatenate([sh[... ,None], ch[..., None], xhist[..., 4:9]], axis=-1)
-    states = np.concatenate([in_state_clean[:, :-1, :], uhist[:, :-1, :]], axis=-1)
+    in_state_clean = jnp.concatenate([sh[... ,None], ch[..., None], xhist[..., 4:9]], axis=-1)
+    states = jnp.concatenate([in_state_clean[:, :-1, :], uhist[:, :-1, :]], axis=-1)
     dynamics = (in_state_clean[:, 1:, :] - in_state_clean[:, :-1, :])[..., :-1] / dt
 
     return states, dynamics
@@ -63,20 +65,12 @@ def convert(xhist, uhist, dt):
 def run_controller(
     controller,
     data,
+    env: TrailerBicycleEnv,
     max_steps=None,
     headless=False,
 ):
 
     warnings.filterwarnings("ignore", module="gymnasium")
-
-
-    env_kwargs = {
-        "renderer": "pybullet",
-        "render_mode": "rgb_array_birds_eye",
-        "render_width": 600,
-        "render_height": 400,
-    }
-    env = TrailerBicycleEnv(**env_kwargs)
 
     env.reset()
 
@@ -86,6 +80,7 @@ def run_controller(
 
     i = 0
     # nn_state = None
+    print('\n')
 
     try:
         for i in loop:
@@ -94,6 +89,7 @@ def run_controller(
 
             state: VehicleState = env.unwrapped._state
 
+            # print(*astuple(state)[:-2], env.unwrapped.track.mu, env.unwrapped.track._arc_samples[env.unwrapped._last_index])
             mpc_state = jnp.array(
                 [
                     *astuple(state)[:-2],
@@ -112,7 +108,12 @@ def run_controller(
 
             observation, reward, terminated, truncated, info = env.step(action)
 
-            if not headless:
+            n_viz = 50    
+            env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
+
+            print(f"\rIter: {i}", end="")
+
+            if not headless and i % 2 == 0:
                 frame = env.render()
                 cv2.imshow("sim", frame[..., ::-1])
                 cv2.waitKey(1)
@@ -135,10 +136,10 @@ def build_controller(config):
 
     return MPPI_Jax_Debug(*ctl_args, **ctl_kwargs)
 
-mppi_cfg_fwd = (
-    (
+mppi_cfg_fwd = [
+    [
        jnp.diag(jnp.array([3e-3, 0.2])),
-    ),
+    ],
     {
         "inverse_temp": 1,
         "K": 500,
@@ -151,16 +152,16 @@ mppi_cfg_fwd = (
         "v_target": 25,
         "p_weight": 1e2,
         "p_slow_weight": 1e0,
-        "s_weight": 2e2,
-        "c_weight": 1e0,
-        "a_weight": 7e2,
+        "s_weight": 2e1,
+        "c_weight": 2e2,
+        "a_weight": 1e2,
     },
-)
+]
 
-mppi_cfg_rev = (
-    (
+mppi_cfg_rev = [
+    [
         jnp.diag(jnp.array([3e-3, 0.2])),
-    ),
+    ],
     {
         "inverse_temp": 0.5,
         "K": 750,
@@ -173,11 +174,11 @@ mppi_cfg_rev = (
         "v_target": -25,
         "p_weight": 1e2,
         "p_slow_weight": 1e0,
-        "s_weight": 1e2,
-        "c_weight": 1e-2,
+        "s_weight": 1e1,
+        "c_weight": 1e2,
         "a_weight": 1e2,
     },
-)
+]
 
 # State is: 
 # [sin(hitch), cos(hitch), vx, vy, truck_yaw_rate, yaw_trailer_rate, mu, delta, brake/accel]
@@ -186,7 +187,7 @@ mppi_cfg_rev = (
 # [hitch_rate, ...]
 
 data = Data(
-    256, 
+    4096, 
     np.array([0, 0, 10, 0, 0, 0, 0.8, 0, 0]), 
     np.array([0.4, 0.2, 17.3, 1.5, 0.35, 0.35, 0.1, 0.4, 0.4]), 
     np.zeros(6), 
@@ -199,13 +200,33 @@ data = Data(
 #     (build_controller(mppi_cfg_fwd), 0.1),
 # ]
 
-controllers = [build_controller(mppi_cfg_fwd), build_controller(mppi_cfg_rev)]
+env_kwargs = {
+        "renderer": "pybullet",
+        "render_mode": "rgb_array_birds_eye",
+        "render_width": 600,
+        "render_height": 400,
+    }
 
-for c in controllers:
-    run_controller(c, data, 50, False)
+envs = [
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=1, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.8, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.6, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.4, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.2, width=20), VehicleConfig(), SimulationConfig())),
+]
 
-    # for s, d in zip(state, dynamics):
-    #     data.add(s, d)
+controllers = []
+for v in [25, 15, 5]:
+    mppi_cfg_fwd[2]["v_target"] = v
+    mppi_cfg_rev[2]["v_target"] = -v
+    controllers.extend([build_controller(mppi_cfg_fwd), build_controller(mppi_cfg_rev)])
+
+# controllers = [build_controller(mppi_cfg_fwd), build_controller(mppi_cfg_rev)]
+
+for e in envs:
+    for c in controllers:
+        print("Onto next")
+        run_controller(c, data, e, 2000, True)
 
 with open("experiments/exp_007_vehicle_residual_dynamics/data.pkl", "wb") as f:
     pickle.dump(data, f)
