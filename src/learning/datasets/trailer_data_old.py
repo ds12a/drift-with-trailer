@@ -2,12 +2,6 @@ import numpy as np
 import jax
 import json
 
-"""
-Refactored after the old class gave great difficulty.
-
-The new class, instead of splitting state, dynamics as pre-processing, only stores one "quantity" per timestep,
-normalization is done later.
-"""
 
 class Data:
 
