@@ -39,3 +39,4 @@ gym_videos
 *.json
 src/learning/models/trained/
 *.bak
+wandb/

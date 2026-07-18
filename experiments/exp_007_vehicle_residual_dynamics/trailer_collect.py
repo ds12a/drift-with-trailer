@@ -226,7 +226,7 @@ for v in [25, 15, 5]:
 for e_i, e in enumerate(envs):
     for c_i, c in enumerate(controllers):
         print()
-        run_controller(c, data, e, e_i, c_i, 2000, False)
+        run_controller(c, data, e, e_i, c_i, 2000, True)
 
 d = data.store(KIN_FS.data_version, verbose=True)
 d.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))
