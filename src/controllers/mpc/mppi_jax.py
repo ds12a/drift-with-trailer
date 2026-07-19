@@ -7,8 +7,8 @@ import functools
 
 
 # @jax.jit
-@functools.partial(jax.jit, static_argnames=["cost", "term_cost", "bound_control", "dynamics"])
-@functools.partial(jax.vmap, in_axes=(0, 0, 0, None, None, None, None, None, None, None))
+@functools.partial(jax.jit, static_argnames=["cost", "term_cost", "bound_control", "dynamics", "history"])
+@functools.partial(jax.vmap, in_axes=(0, 0, 0, None, None, None, None, None, None, None, None))
 def rollout(
     x: ArrayLike,
     u: ArrayLike,
@@ -20,6 +20,7 @@ def rollout(
     bound_control,
     dynamics,
     step,
+    history=None
 ) -> float:
     """
     Uses Euler's method to integrate the dynamics
@@ -39,16 +40,26 @@ def rollout(
 
     def step_dynamics(carry, control):
         x, S, i = carry
+
+        if history is not None:
+            x_dim = (x.shape[0] + u.shape[0]) / history
+            historical_x = x[:-x.shape[0]]
+            x = x[-x.shape[0]:]
+
         u, v, bounded_noise = control
 
         new_x = x + dynamics(x, v) * step
         new_S = S + cost(new_x, v, i) + gamma * jnp.einsum("n,nm,m->", u, inv_cv, bounded_noise)
         new_i = i + 1
 
-        new_carry = new_x, new_S, new_i
+        new_carry = (
+            jnp.concatenate([historical_x[:x_dim], new_x]) if history is not None else new_x,
+            new_S,
+            new_i,
+        )
 
-        return new_carry, (new_x, new_S)
-
+        return new_carry, (new_x, new_S, v)
+    
     (x, S, _), _ = jax.lax.scan(step_dynamics, (x, 0, 0), (u, v, bounded_noise))
 
     if term_cost:
@@ -106,6 +117,7 @@ class MPPI_Jax:
         K=20000,
         step=0.02,
         T=70,
+        history=None,
         device="mps",
     ):
         """
@@ -138,6 +150,7 @@ class MPPI_Jax:
         self.x_d = x_d
         self.u_d = u_d
         self.T = T
+        self.history = history
 
         self.step = step
         self.cv = cv
@@ -179,6 +192,7 @@ class MPPI_Jax:
             self.bound_control,
             self.dynamics,
             self.step,
+            self.history
         )
 
         return S, noise
