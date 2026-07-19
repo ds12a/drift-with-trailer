@@ -9,8 +9,10 @@ from src.learning.models.trailer_spec import KIN_FS
 from src.learning.models.trailer_spec_nores import RAW_FS
 from src.learning.models.trailer_nn import TrailerModel
 import wandb
+
 # import pickle
 import orbax.checkpoint as ocp
+
 # from src.dynamics.trailer.trailer_bicycle_kinematic import gen_util_funs
 
 # from src.simulation.config.trailer_bicycle_config import (
@@ -19,6 +21,7 @@ import orbax.checkpoint as ocp
 #     TrackConfig,
 #     SimulationConfig,
 # )
+
 
 class ChannelLoss(nnx.Metric):
     def __init__(self, num_channels, argname="channel_losses"):
@@ -32,10 +35,10 @@ class ChannelLoss(nnx.Metric):
         loss = kwargs[self.argname]
         self.count.value += loss.shape[0]
         self.total.value += jnp.sum(loss, axis=0)
-    
+
     def compute(self):
-        return self.total.value / jnp.maximum(self.count.value, 1) # no div by zero
-    
+        return self.total.value / jnp.maximum(self.count.value, 1)  # no div by zero
+
     def reset(self):
         self.total.value = jnp.zeros_like(self.total.value)
         self.count.value = jnp.zeros_like(self.count.value)
@@ -45,10 +48,13 @@ class ChannelLoss(nnx.Metric):
 def loss_fn(model, batch):
     x, y = batch
     return ((model(x) - y) ** 2).mean()
+
+
 @nnx.jit
 def col_loss(model, batch):
     x, y = batch
-    return ((model(x) - y) ** 2)
+    return (model(x) - y) ** 2
+
 
 @nnx.jit
 def train_step(model, optimizer, metrics, batch):
@@ -58,11 +64,14 @@ def train_step(model, optimizer, metrics, batch):
     metrics.update(loss=loss, channel_losses=cl)
     return loss
 
+
 # @nnx.jit
 def eval_step(model, state):
     return model(state[None, ...])[0]
 
+
 CHANNELS = ("ax", "ay", "w1", "w2")
+
 
 class LearnedDynamics:
     def __init__(
@@ -91,9 +100,7 @@ class LearnedDynamics:
     def train(self, epochs, checkpoint_freq=5):
         best = None
         for e in range(epochs):
-            train, test = self.data.get_data(
-                self.batch_size, jax.random.fold_in(self.key, e)
-            )
+            train, test = self.data.get_data(self.batch_size, jax.random.fold_in(self.key, e))
             for i, batch in enumerate(train):
                 train_step(self.model, self.optimizer, self.metrics, batch)
 
@@ -101,8 +108,9 @@ class LearnedDynamics:
             self.metrics.reset()
 
             for i, batch in enumerate(test):
-                self.metrics.update(loss=loss_fn(self.model, batch),
-                                    channel_losses=col_loss(self.model, batch))
+                self.metrics.update(
+                    loss=loss_fn(self.model, batch), channel_losses=col_loss(self.model, batch)
+                )
 
             self.test_loss_history.append(self.metrics.compute())
             self.metrics.reset()
@@ -112,27 +120,30 @@ class LearnedDynamics:
 
             raw_rmse = np.sqrt(np.asarray(te["channel_losses"]) * self.y_std**2)
 
-            wandb.log({f"test_rmse_raw/{c}": float(r)
-                    for c, r in zip(CHANNELS, raw_rmse)}, step=e)
+            wandb.log({f"test_rmse_raw/{c}": float(r) for c, r in zip(CHANNELS, raw_rmse)}, step=e)
 
-            print("   raw RMSE  " + "  ".join(
-                f"{c}:{r:.4f}" for c, r in zip(CHANNELS, raw_rmse)))
+            print("   raw RMSE  " + "  ".join(f"{c}:{r:.4f}" for c, r in zip(CHANNELS, raw_rmse)))
 
-            wandb.log({
-                "epoch": e,
-                "train/loss": tl,
-                "test/loss": vl,
-                "test/rmse": np.sqrt(vl),
-                **{f"test_rmse_raw/{c}": float(r) for c, r in zip(CHANNELS, raw_rmse)},
-                **{f"train/{c}": float(v) for c, v in zip(CHANNELS, tr["channel_losses"])},
-                **{f"test/{c}": float(v) for c, v in zip(CHANNELS, te["channel_losses"])},
-            }, step=e)
+            wandb.log(
+                {
+                    "epoch": e,
+                    "train/loss": tl,
+                    "test/loss": vl,
+                    "test/rmse": np.sqrt(vl),
+                    **{f"test_rmse_raw/{c}": float(r) for c, r in zip(CHANNELS, raw_rmse)},
+                    **{f"train/{c}": float(v) for c, v in zip(CHANNELS, tr["channel_losses"])},
+                    **{f"test/{c}": float(v) for c, v in zip(CHANNELS, te["channel_losses"])},
+                },
+                step=e,
+            )
 
-            print(f"\rEpoch {e}\t Train loss: {tl:.5f}\tTest loss: {vl:.5f}"
-                  f"\tTest RMSE: {np.sqrt(vl):.5f}\t"
-                  + " ".join(f"{c}:{v:.3f}" for c, v in zip(CHANNELS, te["channel_losses"])) + 
-                  "\traw RMSE: " + "  ".join(
-                    f"{c}:{r:.4f}" for c, r in zip(CHANNELS, raw_rmse)))
+            print(
+                f"\rEpoch {e}\t Train loss: {tl:.5f}\tTest loss: {vl:.5f}"
+                f"\tTest RMSE: {np.sqrt(vl):.5f}\t"
+                + " ".join(f"{c}:{v:.3f}" for c, v in zip(CHANNELS, te["channel_losses"]))
+                + "\traw RMSE: "
+                + "  ".join(f"{c}:{r:.4f}" for c, r in zip(CHANNELS, raw_rmse))
+            )
 
             if e > 0 and e % checkpoint_freq == 0:
                 self.save(output="src/learning/models/trained/trailer-nokin")
@@ -144,7 +155,7 @@ class LearnedDynamics:
 
     # def _unnormalize(self, dynamics):
     #     return dynamics * self.dynamics_std + self.dynamics_mean
-    
+
     def save(self, output="src/learning/models/trained/trailer"):
         graphdef, state = nnx.split(self.model)
         checkpointer = ocp.StandardCheckpointer()

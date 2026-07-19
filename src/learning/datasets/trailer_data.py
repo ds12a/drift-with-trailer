@@ -39,7 +39,7 @@ class DataCollector:
         Assuming 2D input (a whole trajectory history)
         """
 
-        assert(data.ndim == 2 and data.shape[1] == self.data_size)
+        assert data.ndim == 2 and data.shape[1] == self.data_size
         self.raw_data.append(data)
         self.traj_len.append(len(data))
         self.meta.append([run, ctrl, step])
@@ -54,20 +54,16 @@ class DataCollector:
 
         if verbose:
             print(f"Generating DataStore, data is of size {data.shape}")
-        
-        return DataStore(
-            data=data,
-            traj_len=traj_len,
-            meta=meta,
-            dt=self.dt,
-            version=version
-        )
-    
+
+        return DataStore(data=data, traj_len=traj_len, meta=meta, dt=self.dt, version=version)
+
+
 @dataclass(frozen=True)
 class FeatureSpec:
     """
     Everything needed to rebuild a DataLoader from an archive.
     """
+
     encode_x: Callable  # NN input, encodes horizon into network input
     encode_y: Callable  # NN output, encodes horizon into network output
     H: int = 4  # Pre-horizon
@@ -75,6 +71,7 @@ class FeatureSpec:
     train_frac: float = 0.7
     split_seed: int = 137
     data_version: str = "v1"
+
 
 @dataclass(frozen=True)
 class DataStore:
@@ -92,9 +89,9 @@ class DataStore:
 
     def save(self, path):
         np.savez(path, **{k: getattr(self, k) for k in self._KEYS})
-    
+
     @classmethod
-    def load(cls, path): 
+    def load(cls, path):
         with np.load(path) as f:
             d = {k: f[k] for k in cls._KEYS}
         return cls(**{**d, "dt": float(d["dt"]), "version": str(d["version"])})
@@ -108,7 +105,7 @@ class DataStore:
         if verbose:
             print(f"Building DataLoader, data {self.data.shape}")
         return DataLoader(self.data, self.traj_len, self.meta, self.dt, spec)
-        
+
 
 @dataclass(frozen=True)
 class DataLoader:
@@ -122,10 +119,10 @@ class DataLoader:
     meta: np.ndarray
     dt: float
     spec: FeatureSpec
-    x_mean: Optional[np.ndarray] = None      # None -> computed in __post_init__
-    x_std:  Optional[np.ndarray] = None
+    x_mean: Optional[np.ndarray] = None  # None -> computed in __post_init__
+    x_std: Optional[np.ndarray] = None
     y_mean: Optional[np.ndarray] = None
-    y_std:  Optional[np.ndarray] = None
+    y_std: Optional[np.ndarray] = None
 
     _KEYS = ("data", "traj_len", "meta", "dt", "x_mean", "x_std", "y_mean", "y_std")
 
@@ -135,8 +132,7 @@ class DataLoader:
         object.__setattr__(self, "train", train)
         object.__setattr__(self, "test", test)
 
-        if (self.x_mean is None or self.y_mean is None 
-                or self.x_std is None or self.y_std is None):
+        if self.x_mean is None or self.y_mean is None or self.x_std is None or self.y_std is None:
             for k, v in zip(("x_mean", "x_std", "y_mean", "y_std"), self.compute_stats()):
                 object.__setattr__(self, k, v)
 
@@ -144,19 +140,21 @@ class DataLoader:
         key = jax.random.PRNGKey(137) if key is None else key
         k1, k2 = jax.random.split(key)
         return self._batch(self.train, batch_size, k1), self._batch(self.test, batch_size, k2)
-    
+
     def _batch(self, idx, B, key):
         spec = self.spec
         W = np.arange(self.spec.H + self.spec.F)
 
         n = (len(idx) // B) * B
         p = jax.random.permutation(key, len(idx))[:n].reshape(-1, B)
-        
+
         for b in range(len(p)):
             # pb_idx = idx[p[b]]
-            w = self.data[idx[p[b]][:, None] + W]          # (B, H+F, D)
-            yield ((spec.encode_x(w) - self.x_mean) / self.x_std,
-                   (spec.encode_y(w) - self.y_mean) / self.y_std)
+            w = self.data[idx[p[b]][:, None] + W]  # (B, H+F, D)
+            yield (
+                (spec.encode_x(w) - self.x_mean) / self.x_std,
+                (spec.encode_y(w) - self.y_mean) / self.y_std,
+            )
 
     def _split(self):
         """
@@ -166,11 +164,12 @@ class DataLoader:
         valid, tid = self._windows(self.traj_len)
         t_n = len(self.traj_len)
         keep = np.zeros(t_n, bool)
-        keep[np.random.default_rng(spec.split_seed)
-            .permutation(t_n)[: int(t_n * spec.train_frac)]] = True
+        keep[
+            np.random.default_rng(spec.split_seed).permutation(t_n)[: int(t_n * spec.train_frac)]
+        ] = True
         m = keep[tid]
         return valid[m], valid[~m]
-    
+
     def _windows(self, traj_len):
         """
         Recomputes window
@@ -197,7 +196,9 @@ class DataLoader:
             for k, v in (("x", spec.encode_x(w)), ("y", spec.encode_y(w))):
                 v = np.asarray(v, np.float64)
                 a = acc.setdefault(k, [np.zeros(v.shape[1]), np.zeros(v.shape[1]), 0])
-                a[0] += v.sum(0); a[1] += (v * v).sum(0); a[2] += len(v)
+                a[0] += v.sum(0)
+                a[1] += (v * v).sum(0)
+                a[2] += len(v)
 
         def stat(k):
             s, s2, n = acc[k]
@@ -207,7 +208,7 @@ class DataLoader:
 
         (xm, xs), (ym, ys) = stat("x"), stat("y")
         return xm, xs, ym, ys
-    
+
     # def update(self, spec: FeatureSpec):
     #     """
     #     Goofy, should not be used under normal conditions, only if somehow there is
@@ -222,16 +223,14 @@ class DataLoader:
     #     object.__setattr__(self, "x_mean", xm)
     #     object.__setattr__(self, "x_std", xs)
     #     object.__setattr__(self, "y_mean", ym)
-    #     object.__setattr__(self, "y_std", ys)      
-
+    #     object.__setattr__(self, "y_std", ys)
 
     def save(self, path):
-        np.savez(path, **{k: getattr(self, k) for k in self._KEYS},
-                 version=self.spec.data_version)
-    
+        np.savez(path, **{k: getattr(self, k) for k in self._KEYS}, version=self.spec.data_version)
+
     @classmethod
     def load(cls, path, spec: FeatureSpec):
         with np.load(path) as f:
-            assert(f["version"].item() == spec.data_version)
+            assert f["version"].item() == spec.data_version
             d = {k: f[k] for k in cls._KEYS}
         return cls(**{**d, "dt": float(d["dt"])}, spec=spec)

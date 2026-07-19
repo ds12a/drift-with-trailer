@@ -23,9 +23,9 @@ import pickle
 import jax
 
 from src.simulation.config.trailer_bicycle_config import (
-    TrailerBicycleEnvConfig, 
-    VehicleConfig, 
-    TrackConfig, 
+    TrailerBicycleEnvConfig,
+    VehicleConfig,
+    TrackConfig,
     SimulationConfig,
 )
 
@@ -58,11 +58,12 @@ def convert(xhist, uhist, dt):
     sh = jnp.sin(hitch)
     ch = jnp.cos(hitch)
 
-    in_state_clean = jnp.concatenate([sh[... ,None], ch[..., None], xhist[..., 4:9]], axis=-1)
+    in_state_clean = jnp.concatenate([sh[..., None], ch[..., None], xhist[..., 4:9]], axis=-1)
     states = jnp.concatenate([in_state_clean[:, :-1, :], uhist[:, :-1, :]], axis=-1)
     # dynamics = (in_state_clean[:, 1:, :] - in_state_clean[:, :-1, :])[..., :-1] / dt
 
     return states
+
 
 # Controller generalized mpc to support other predefined actions
 def run_controller(
@@ -70,7 +71,7 @@ def run_controller(
     data,
     env: TrailerBicycleEnv,
     env_i,
-    ctl_i, # for metadata
+    ctl_i,  # for metadata
     max_steps=None,
     headless=False,
 ):
@@ -104,20 +105,22 @@ def run_controller(
                 ]
             )
 
-
             u, xhist, vhist = controller.run_mpc(mpc_state)
-            
+
             for state_i in convert(xhist, vhist, env.scenario.simulation.dt):
                 data.add(np.array(state_i), env_i, ctl_i, i)
-    
+
             action = np.array([u[0], u[1]])
 
             observation, reward, terminated, truncated, info = env.step(action)
 
-            n_viz = 50    
+            n_viz = 50
             env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
 
-            print(f"\rIter: {i}/{max_steps}, terminated #: {t}. Env {env_i}, Controller {ctl_i}", end="")
+            print(
+                f"\rIter: {i}/{max_steps}, terminated #: {t}. Env {env_i}, Controller {ctl_i}",
+                end="",
+            )
 
             if not headless and i % 2 == 0:
                 frame = env.render()
@@ -131,6 +134,7 @@ def run_controller(
 
     # return state, dynamics
 
+
 def build_controller(config):
     scenario = TrailerBicycleEnvConfig(
         "scenario", TrackConfig(), VehicleConfig(), SimulationConfig()
@@ -142,9 +146,10 @@ def build_controller(config):
 
     return MPPI_Jax_Debug(*ctl_args, **ctl_kwargs)
 
+
 mppi_cfg_fwd = [
     [
-       jnp.diag(jnp.array([3e-3, 0.2])),
+        jnp.diag(jnp.array([3e-3, 0.2])),
     ],
     {
         "inverse_temp": 1,
@@ -154,7 +159,7 @@ mppi_cfg_fwd = [
         "alpha": 0.05,
     },
     {
-        "reverse": False, 
+        "reverse": False,
         "v_target": 25,
         "p_weight": 1e2,
         "p_slow_weight": 1e0,
@@ -176,7 +181,7 @@ mppi_cfg_rev = [
         "alpha": 0.05,
     },
     {
-        "reverse": False, 
+        "reverse": False,
         "v_target": -25,
         "p_weight": 1e2,
         "p_slow_weight": 1e0,
@@ -186,7 +191,7 @@ mppi_cfg_rev = [
     },
 ]
 
-# State is: 
+# State is:
 # [sin(hitch), cos(hitch), vx, vy, truck_yaw_rate, yaw_trailer_rate, mu, delta, brake/accel]
 #
 # Dynamics are dState/dt
@@ -194,25 +199,25 @@ mppi_cfg_rev = [
 
 data = DataCollector(9, 0.05)
 
-# runs = [ 
+# runs = [
 #     (build_controller(mppi_cfg_fwd), 0, jnp.sin(jnp.)), # controller, gaussian noise mag, sin freq, sin amp
 #     (build_controller(mppi_cfg_fwd), 0.01),
 #     (build_controller(mppi_cfg_fwd), 0.1),
 # ]
 
 env_kwargs = {
-        "renderer": "pybullet",
-        "render_mode": "rgb_array_birds_eye",
-        "render_width": 150,
-        "render_height": 100,
-    }
+    "renderer": "pybullet",
+    "render_mode": "rgb_array_birds_eye",
+    "render_width": 150,
+    "render_height": 100,
+}
 
 envs = [
     TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.2, width=20), VehicleConfig(), SimulationConfig())),
     TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.4, width=20), VehicleConfig(), SimulationConfig())),
     TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.6, width=20), VehicleConfig(), SimulationConfig())),
     TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.8, width=20), VehicleConfig(), SimulationConfig())),
-    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=1, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=1.0, width=20), VehicleConfig(), SimulationConfig())),
 ]
 
 controllers = []

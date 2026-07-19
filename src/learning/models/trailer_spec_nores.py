@@ -42,6 +42,13 @@ fzr = V.mass * 9.8 * V.lf / (
 #     ax  = fxr / (V.mass + V.trailer_mass)  # prior is allowed to use correct v curve (in this case)
 #     return jnp.stack([ax, jnp.zeros_like(ax), w1, w2], -1)
 
+def kin_zeros(r):
+    sh, ch, vx, vy = r[..., 0], r[..., 1], r[..., 2], r[..., 3]
+    mu = r[..., 4]
+    delta = jnp.clip(r[..., 5], -1, 1) * V.max_steer_rad
+    a = r[..., 6]
+    return jnp.zeros((*r.shape[:-1], 4))
+
 
 def make_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="kin-vy"):
     F = 1
