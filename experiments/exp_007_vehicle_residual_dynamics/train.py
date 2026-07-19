@@ -6,6 +6,7 @@ from pathlib import Path
 from flax import nnx
 from src.learning.datasets.trailer_data import DataStore, DataLoader
 from src.learning.models.trailer_spec import KIN_FS
+from src.learning.models.trailer_spec_nores import RAW_FS
 from src.learning.models.trailer_nn import TrailerModel
 import wandb
 # import pickle
@@ -134,12 +135,12 @@ class LearnedDynamics:
                     f"{c}:{r:.4f}" for c, r in zip(CHANNELS, raw_rmse)))
 
             if e > 0 and e % checkpoint_freq == 0:
-                self.save()
+                self.save(output="src/learning/models/trained/trailer-nokin")
                 if best is None or vl < best:
                     best = vl
                     wandb.run.summary["best_test_loss"] = vl
                     wandb.run.summary["best_epoch"] = e
-                    self.save(output="src/learning/models/trained/trailer-best")
+                    self.save(output="src/learning/models/trained/trailer-nokin-best")
 
     # def _unnormalize(self, dynamics):
     #     return dynamics * self.dynamics_std + self.dynamics_mean
@@ -156,32 +157,23 @@ class LearnedDynamics:
         restored_state = checkpointer.restore(source, state)
         nnx.update(self.model, restored_state)
 
-class TrailerModel(nnx.Module):
-    def __init__(self, in_dim, out_dim, width=128, depth=2):
-        rng = nnx.Rngs(1248)
-        layers, d = [], in_dim
-        for _ in range(depth):
-            layers += [nnx.Linear(d, width, rngs=rng), nnx.silu]
-            d = width
-        layers.append(nnx.Linear(width, out_dim, rngs=rng))
-        self.model = nnx.Sequential(*layers)
-    def __call__(self, x):
-        return self.model(x)
-
 if __name__ == "__main__":
+
+    spec = RAW_FS
+
     raw = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))
-    data = raw.build(KIN_FS, True)
+    data = raw.build(spec, True)
 
     wandb.init(
         project="Train",
         config={
-            "learning_rate": 1e-3,
+            "learning_rate": 1e-2,
             "batch_size": 4096,
-            "H": KIN_FS.H,
-            "F": KIN_FS.F,
-            "data_version": KIN_FS.data_version,
-            "split_seed": KIN_FS.split_seed,
-            "train_frac": KIN_FS.train_frac,
+            "H": spec.H,
+            "F": spec.F,
+            "data_version": spec.data_version,
+            "split_seed": spec.split_seed,
+            "train_frac": spec.train_frac,
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
@@ -189,10 +181,10 @@ if __name__ == "__main__":
     )
 
     learned = LearnedDynamics(
-        TrailerModel(24, 4), data,
+        TrailerModel(spec.H * 6, 4), data,
         {"learning_rate": wandb.config.learning_rate},  # not wandb.config directly
         batch_size=wandb.config.batch_size,
     )
-    learned.train(50)
+    learned.train(500)
     learned.save()
     data.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc1.npz"))
