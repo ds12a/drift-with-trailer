@@ -25,6 +25,7 @@ dependencies = [
     "opencv-python",
     "moviepy",
     # "torch",
+    "wandb>=0.28.1",
 ]
 
 [dependency-groups]

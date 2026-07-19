@@ -1,7 +1,10 @@
+from pathlib import Path
 from src.controllers.mpc.mppi_jax import MPPI_Jax
 from src.controllers.mpc.smppi_jax import SMPPI_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
 from src.controllers.mpc.debug.smppi_jax_debug import SMPPI_Jax_Debug
+
+from src.learning.models.trailer_spec import KIN_FS
 
 from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs
 import time
@@ -14,7 +17,7 @@ import itertools
 
 import jax.numpy as jnp
 
-from src.learning.datasets.trailer_data import Data
+from src.learning.datasets.trailer_data import DataCollector, DataStore
 from experiments.exp_007_vehicle_residual_dynamics.util_fns import gen_util_funs
 import pickle
 import jax
@@ -57,15 +60,17 @@ def convert(xhist, uhist, dt):
 
     in_state_clean = jnp.concatenate([sh[... ,None], ch[..., None], xhist[..., 4:9]], axis=-1)
     states = jnp.concatenate([in_state_clean[:, :-1, :], uhist[:, :-1, :]], axis=-1)
-    dynamics = (in_state_clean[:, 1:, :] - in_state_clean[:, :-1, :])[..., :-1] / dt
+    # dynamics = (in_state_clean[:, 1:, :] - in_state_clean[:, :-1, :])[..., :-1] / dt
 
-    return states, dynamics
+    return states
 
 # Controller generalized mpc to support other predefined actions
 def run_controller(
     controller,
     data,
     env: TrailerBicycleEnv,
+    env_i,
+    ctl_i, # for metadata
     max_steps=None,
     headless=False,
 ):
@@ -80,11 +85,12 @@ def run_controller(
 
     i = 0
     # nn_state = None
-    print('\n')
+    t = 0
 
     try:
         for i in loop:
             if terminated:
+                t += 1
                 env.reset()
 
             state: VehicleState = env.unwrapped._state
@@ -101,8 +107,8 @@ def run_controller(
 
             u, xhist, vhist = controller.run_mpc(mpc_state)
             
-            for state_i, dynamics_i in zip(*convert(xhist, vhist, env.scenario.simulation.dt)):
-                data.add(state_i, dynamics_i)
+            for state_i in convert(xhist, vhist, env.scenario.simulation.dt):
+                data.add(np.array(state_i), env_i, ctl_i, i)
     
             action = np.array([u[0], u[1]])
 
@@ -111,7 +117,7 @@ def run_controller(
             n_viz = 50    
             env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
 
-            print(f"\rIter: {i}", end="")
+            print(f"\rIter: {i}/{max_steps}, terminated #: {t}. Env {env_i}, Controller {ctl_i}", end="")
 
             if not headless and i % 2 == 0:
                 frame = env.render()
@@ -175,7 +181,7 @@ mppi_cfg_rev = [
         "p_weight": 1e2,
         "p_slow_weight": 1e0,
         "s_weight": 1e1,
-        "c_weight": 1e2,
+        "c_weight": 1e0,
         "a_weight": 1e2,
     },
 ]
@@ -186,13 +192,7 @@ mppi_cfg_rev = [
 # Dynamics are dState/dt
 # [hitch_rate, ...]
 
-data = Data(
-    4096, 
-    np.array([0, 0, 10, 0, 0, 0, 0.8, 0, 0]), 
-    np.array([0.4, 0.2, 17.3, 1.5, 0.35, 0.35, 0.1, 0.4, 0.4]), 
-    np.zeros(6), 
-    np.array([0.4, 0.4, 1.5, 1.5, 0.8, 0.8]),
-)
+data = DataCollector(9, 0.05)
 
 # runs = [ 
 #     (build_controller(mppi_cfg_fwd), 0, jnp.sin(jnp.)), # controller, gaussian noise mag, sin freq, sin amp
@@ -203,16 +203,16 @@ data = Data(
 env_kwargs = {
         "renderer": "pybullet",
         "render_mode": "rgb_array_birds_eye",
-        "render_width": 600,
-        "render_height": 400,
+        "render_width": 150,
+        "render_height": 100,
     }
 
 envs = [
-    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=1, width=20), VehicleConfig(), SimulationConfig())),
-    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.8, width=20), VehicleConfig(), SimulationConfig())),
-    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.6, width=20), VehicleConfig(), SimulationConfig())),
-    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.4, width=20), VehicleConfig(), SimulationConfig())),
     TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.2, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.4, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.6, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.8, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=1, width=20), VehicleConfig(), SimulationConfig())),
 ]
 
 controllers = []
@@ -223,10 +223,10 @@ for v in [25, 15, 5]:
 
 # controllers = [build_controller(mppi_cfg_fwd), build_controller(mppi_cfg_rev)]
 
-for e in envs:
-    for c in controllers:
-        print("Onto next")
-        run_controller(c, data, e, 2000, True)
+for e_i, e in enumerate(envs):
+    for c_i, c in enumerate(controllers):
+        print()
+        run_controller(c, data, e, e_i, c_i, 2000, True)
 
-with open("experiments/exp_007_vehicle_residual_dynamics/data.pkl", "wb") as f:
-    pickle.dump(data, f)
+d = data.store(KIN_FS.data_version, verbose=True)
+d.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))

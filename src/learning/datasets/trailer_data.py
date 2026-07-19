@@ -1,158 +1,237 @@
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, List, Optional
 import numpy as np
 import jax
 import json
 
+"""
+Refactored after the old class gave great difficulty.
 
-class Data:
+To avoid shennanigans, collection and distribtion/loading are separated
 
-    def __init__(
-        self,
-        batch_size,
-        state_mean,
-        state_std,
-        dynamics_mean,
-        dynamics_std,
-        horizon_len=4,
-        train=0.4,
-    ):
+DataCollector is purely for data collection
 
-        # State, dynamics 3D array size (run idx, timestep, data)
-        self.states = []
-        self.dynamics = []
-        self.traj_len = []
+DataStore is purely for storing raw unprocessed data (in case we need to modify the 
+data feed to the network)
+
+DataLoader is purely for data processing + feeding training loop
+"""
+
+
+class DataCollector:
+    """
+    Serves purely as a collector class with a very large cache.
+    """
+
+    def __init__(self, data_size, dt):
+        self.dt = dt
+        self.data_size = data_size
+
+        self.raw_data = []  # (n_traj, n_time, D) - All info per step
+        self.traj_len = []  # (n_traj)
+        self.meta = []  # (n_traj, 3)
 
         self.n = 0
 
-        self.state_std = state_std
-        self.state_mean = state_mean
-        self.dynamics_std = dynamics_std
-        self.dynamics_mean = dynamics_mean
-        self.batch_size = batch_size
-        self.horizon_len = horizon_len
-        self.key = jax.random.PRNGKey(1)
-
-        self.train_frac = train
-        self.train_idx = np.empty(0, dtype=int)
-        self.test_idx = np.empty(0, dtype=int)
-
-    def __len__(self):
-
-        true_traj_len = [max(i + 1 - self.horizon_len, 0) for i in self.traj_len]
-        self.true_traj_len_buffer = true_traj_len  # Maybe unecessary
-
-        return sum(true_traj_len)
-
-    def add(self, state, dynamics):
+    def add(self, data: np.ndarray, run, ctrl, step):
         """
         Assuming 2D input (a whole trajectory history)
         """
-        n_old = len(self)
 
-        state, dynamics = self._normalize(state, dynamics)
+        assert(data.ndim == 2 and data.shape[1] == self.data_size)
+        self.raw_data.append(data)
+        self.traj_len.append(len(data))
+        self.meta.append([run, ctrl, step])
 
-        self.states.append(state)
-        self.dynamics.append(dynamics)
-        self.traj_len.append(len(state))
-        self.n += len(state)
+    def store(self, version, verbose=False):
+        """
+        Stores data in a DataStore
+        """
+        data = np.concatenate(self.raw_data, axis=0).astype(np.float32, copy=False)
+        traj_len = np.asarray(self.traj_len)
+        meta = np.asarray(self.meta)
 
-        n_new = len(self)
-        self.key, subkey = jax.random.split(self.key)
-        new = np.array(jax.random.permutation(subkey, np.arange(n_old, n_new)))
-        k = int(round(self.train_frac * len(new)))
-        self.train_idx = np.concatenate([self.train_idx, new[:k]]).astype(int)
-        self.test_idx = np.concatenate([self.test_idx, new[k:]]).astype(int)
-
-    def get_data(self):
-        len(self)  # refresh true_traj_len_buffer
-
-        self.key, k1, k2 = jax.random.split(self.key, 3)
-        train = np.array(jax.random.permutation(k1, self.train_idx))
-        test = np.array(jax.random.permutation(k2, self.test_idx))
-
-        return self._batch(train), self._batch(test)
-
-    def _batch(self, perm):
-        s = len(self.states[0][0])
-        d = len(self.dynamics[0][0])
-        h = self.horizon_len
-
-        leftover = len(perm) % self.batch_size
-        perm = perm[leftover:]
-
-        B = len(perm) // self.batch_size
-        batch_perm = perm.reshape((B, self.batch_size))
-
-        traj_len_prefix = np.cumsum(np.insert(self.true_traj_len_buffer, 0, 0))
-        traj_indices = np.searchsorted(traj_len_prefix[1:], batch_perm, side="right")
-        offset = batch_perm - traj_len_prefix[traj_indices]
-
-        batched_states = np.zeros((B, self.batch_size, h * s))
-        batched_dynamics = np.zeros((B, self.batch_size, h * d))
-
-        for b in range(B):
-            for i in range(self.batch_size):
-                t_idx = traj_indices[b, i]
-                o_idx = offset[b, i]
-                st_window = self.states[t_idx][o_idx : o_idx + h]
-                dy_window = self.dynamics[t_idx][o_idx : o_idx + h]
-
-                batched_states[b, i] = st_window.ravel()
-                batched_dynamics[b, i] = dy_window.ravel()
-
-        return batched_states, batched_dynamics
-
-    def _normalize(self, states, dynamics):
-        states = (states - self.state_mean) / self.state_std
-        dynamics = (dynamics - self.dynamics_mean) / self.dynamics_std
-
-        return states, dynamics
-
-    def dump_json(self, filepath: str):
-
-        # Convert internal arrays to list
-        data_dict = {
-            "batch_size": self.batch_size,
-            "horizon_len": self.horizon_len,
-            "n": self.n,
-            "traj_len": self.traj_len,
-            "state_mean": np.asarray(self.state_mean).tolist(),
-            "state_std": np.asarray(self.state_std).tolist(),
-            "dynamics_mean": np.asarray(self.dynamics_mean).tolist(),
-            "dynamics_std": np.asarray(self.dynamics_std).tolist(),
-            "states": [np.asarray(s).tolist() for s in self.states],
-            "dynamics": [np.asarray(d).tolist() for d in self.dynamics],
-            # Convert JAX PRNGKey to a list of integers
-            "key": np.asarray(self.key).tolist(),
-            "train_idx": self.train_idx.tolist(),
-            "test_idx": self.test_idx.tolist(),
-        }
-
-        with open(filepath, "w") as f:
-            json.dump(data_dict, f)
-
-    @classmethod
-    def load_json(cls, filepath: str):
-        """Loads a Data object from a JSON file."""
-        import json
-
-        with open(filepath, "r") as f:
-            data_dict = json.load(f)
-
-        obj = cls(
-            batch_size=data_dict["batch_size"],
-            state_mean=np.array(data_dict["state_mean"]),
-            state_std=np.array(data_dict["state_std"]),
-            dynamics_mean=np.array(data_dict["dynamics_mean"]),
-            dynamics_std=np.array(data_dict["dynamics_std"]),
-            horizon_len=data_dict["horizon_len"],
+        if verbose:
+            print(f"Generating DataStore, data is of size {data.shape}")
+        
+        return DataStore(
+            data=data,
+            traj_len=traj_len,
+            meta=meta,
+            dt=self.dt,
+            version=version
         )
+    
+@dataclass(frozen=True)
+class FeatureSpec:
+    """
+    Everything needed to rebuild a DataLoader from an archive.
+    """
+    encode_x: Callable  # NN input, encodes horizon into network input
+    encode_y: Callable  # NN output, encodes horizon into network output
+    H: int = 4  # Pre-horizon
+    F: int = 1  # Post-horizon
+    train_frac: float = 0.7
+    split_seed: int = 137
+    data_version: str = "v1"
 
-        obj.n = data_dict["n"]
-        obj.traj_len = data_dict["traj_len"]
-        obj.states = [np.array(s) for s in data_dict["states"]]
-        obj.dynamics = [np.array(d) for d in data_dict["dynamics"]]
-        obj.key = jax.numpy.array(data_dict["key"])
-        obj.train_idx = np.array(data_dict["train_idx"], dtype=int)
-        obj.test_idx = np.array(data_dict["test_idx"], dtype=int)
+@dataclass(frozen=True)
+class DataStore:
+    """
+    Stores/loads trajectories in a processed numpy state.
+    """
 
-        return obj
+    data: np.ndarray  # (N, D)
+    traj_len: np.ndarray
+    meta: np.ndarray  # (n_traj, 3): run, ctrl, step
+    dt: float
+    version: str
+
+    _KEYS = ("data", "traj_len", "meta", "dt", "version")
+
+    def save(self, path):
+        np.savez(path, **{k: getattr(self, k) for k in self._KEYS})
+    
+    @classmethod
+    def load(cls, path): 
+        with np.load(path) as f:
+            d = {k: f[k] for k in cls._KEYS}
+        return cls(**{**d, "dt": float(d["dt"]), "version": str(d["version"])})
+
+    def build(self, spec: FeatureSpec, verbose=False):
+        """
+        Builds masks for training, computes statistics for normalization.
+        Actual normalization happens during training
+        """
+
+        if verbose:
+            print(f"Building DataLoader, data {self.data.shape}")
+        return DataLoader(self.data, self.traj_len, self.meta, self.dt, spec)
+        
+
+@dataclass(frozen=True)
+class DataLoader:
+    """
+    DataLoader internal data is intended to be immutable. If augmentation
+    of dataset is desired, keep/regenerate the DataCollector instead
+    """
+
+    data: np.ndarray
+    traj_len: np.ndarray
+    meta: np.ndarray
+    dt: float
+    spec: FeatureSpec
+    x_mean: Optional[np.ndarray] = None      # None -> computed in __post_init__
+    x_std:  Optional[np.ndarray] = None
+    y_mean: Optional[np.ndarray] = None
+    y_std:  Optional[np.ndarray] = None
+
+    _KEYS = ("data", "traj_len", "meta", "dt", "x_mean", "x_std", "y_mean", "y_std")
+
+    def __post_init__(self):
+        object.__setattr__(self, "version", self.spec.data_version)
+        train, test = self._split()  # Lazy cache
+        object.__setattr__(self, "train", train)
+        object.__setattr__(self, "test", test)
+
+        if (self.x_mean is None or self.y_mean is None 
+                or self.x_std is None or self.y_std is None):
+            for k, v in zip(("x_mean", "x_std", "y_mean", "y_std"), self.compute_stats()):
+                object.__setattr__(self, k, v)
+
+    def get_data(self, batch_size, key=None):
+        key = jax.random.PRNGKey(137) if key is None else key
+        k1, k2 = jax.random.split(key)
+        return self._batch(self.train, batch_size, k1), self._batch(self.test, batch_size, k2)
+    
+    def _batch(self, idx, B, key):
+        spec = self.spec
+        W = np.arange(self.spec.H + self.spec.F)
+
+        n = (len(idx) // B) * B
+        p = jax.random.permutation(key, len(idx))[:n].reshape(-1, B)
+        
+        for b in range(len(p)):
+            # pb_idx = idx[p[b]]
+            w = self.data[idx[p[b]][:, None] + W]          # (B, H+F, D)
+            yield ((spec.encode_x(w) - self.x_mean) / self.x_std,
+                   (spec.encode_y(w) - self.y_mean) / self.y_std)
+
+    def _split(self):
+        """
+        (train, test) window starts
+        """
+        spec = self.spec
+        valid, tid = self._windows(self.traj_len)
+        t_n = len(self.traj_len)
+        keep = np.zeros(t_n, bool)
+        keep[np.random.default_rng(spec.split_seed)
+            .permutation(t_n)[: int(t_n * spec.train_frac)]] = True
+        m = keep[tid]
+        return valid[m], valid[~m]
+    
+    def _windows(self, traj_len):
+        """
+        Recomputes window
+        """
+        spec = self.spec
+        traj_start = np.concatenate([[0], np.cumsum(traj_len)[:-1]])
+        n_win = np.maximum(traj_len - spec.H - spec.F + 1, 0)
+        base = np.repeat(traj_start, n_win)
+        offs = np.arange(int(n_win.sum())) - np.repeat(np.cumsum(n_win) - n_win, n_win)
+        return (base + offs).astype(np.int32), np.repeat(np.arange(len(traj_len)), n_win)
+
+    def compute_stats(self, chunk=1 << 19):
+        """
+        Train-only stats over encode_x/encode_y outputs
+        """
+        data = self.data
+        spec = self.spec
+        train = self.train
+
+        W = np.arange(spec.H + spec.F)
+        acc = {}
+        for i in range(0, len(train), chunk):
+            w = data[train[i : i + chunk, None] + W]
+            for k, v in (("x", spec.encode_x(w)), ("y", spec.encode_y(w))):
+                v = np.asarray(v, np.float64)
+                a = acc.setdefault(k, [np.zeros(v.shape[1]), np.zeros(v.shape[1]), 0])
+                a[0] += v.sum(0); a[1] += (v * v).sum(0); a[2] += len(v)
+
+        def stat(k):
+            s, s2, n = acc[k]
+            mu = s / n
+            sd = np.sqrt(np.maximum(s2 / n - mu * mu, 0.0))
+            return mu.astype(np.float32), np.maximum(sd, 1e-8).astype(np.float32)
+
+        (xm, xs), (ym, ys) = stat("x"), stat("y")
+        return xm, xs, ym, ys
+    
+    # def update(self, spec: FeatureSpec):
+    #     """
+    #     Goofy, should not be used under normal conditions, only if somehow there is
+    #     no more memory
+    #     """
+    #     object.__setattr__(self, "spec", spec)
+    #     object.__setattr__(self, "version", self.spec.data_version)
+    #     train, test = self._split(self.traj_len)  # Lazy cache
+    #     object.__setattr__(self, "train", train)
+    #     object.__setattr__(self, "test", test)
+    #     xm, xs, ym, ys = self.compute_stats(train, spec)
+    #     object.__setattr__(self, "x_mean", xm)
+    #     object.__setattr__(self, "x_std", xs)
+    #     object.__setattr__(self, "y_mean", ym)
+    #     object.__setattr__(self, "y_std", ys)      
+
+
+    def save(self, path):
+        np.savez(path, **{k: getattr(self, k) for k in self._KEYS},
+                 version=self.spec.data_version)
+    
+    @classmethod
+    def load(cls, path, spec: FeatureSpec):
+        with np.load(path) as f:
+            assert(f["version"].item() == spec.data_version)
+            d = {k: f[k] for k in cls._KEYS}
+        return cls(**{**d, "dt": float(d["dt"])}, spec=spec)
