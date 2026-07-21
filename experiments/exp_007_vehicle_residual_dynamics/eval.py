@@ -18,7 +18,7 @@ import jax.numpy as jnp
 
 from src.learning.datasets.trailer_data import DataStore
 from src.learning.models.trailer_spec import (
-    spec, kin, V, IN_COLS, KIN_COLS, VEL_COLS, YAW_COLS,
+    KIN_FS, kin, V, IN_COLS, KIN_COLS, VEL_COLS, YAW_COLS,
 )
 
 CHANNELS = ("ax", "ay", "w1", "w2")
@@ -179,6 +179,7 @@ def probe_block(spec, data, epochs, bs=4096):
 # ----------------------------------------------------------------------------- main
 
 def main():
+    spec = KIN_FS
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=Path, default=DATA)
     ap.add_argument("--ckpt", type=Path, default=CKPT)
