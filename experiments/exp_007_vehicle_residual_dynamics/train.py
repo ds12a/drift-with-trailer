@@ -196,6 +196,6 @@ if __name__ == "__main__":
         {"learning_rate": wandb.config.learning_rate},  # not wandb.config directly
         batch_size=wandb.config.batch_size,
     )
-    learned.train(500)
+    learned.train(50)
     learned.save()
     data.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc1.npz"))

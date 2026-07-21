@@ -68,4 +68,4 @@ def make_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="kin-vy"):
     return FeatureSpec(in_fn, out_fn, H, F, train_frac, split_seed,
                        f"v2-{tag}-H{H}-dt{dt}")
 
-RAW_FS = make_spec(H=16)
+RAW_FS = make_spec(H=4)
