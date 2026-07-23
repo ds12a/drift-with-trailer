@@ -14,7 +14,7 @@ from src.controllers.mpc.mppi_jax import MPPI_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
 from src.learning.models.trailer_nn import TrailerModel
 from src.learning.models.trailer_spec import KIN_FS, kin
-# from src.learning.models.trailer_spec_nores import RAW_FS, kin_zeros
+from src.learning.models.trailer_spec_nores import RAW_FS, kin_zeros
 from src.learning.datasets.trailer_data import DataLoader
 # from src.dynamics.trailer.trailer_bicycle_kinematic import gen_util_funs, TrackProjection
 from src.dynamics.trailer.residual_dynamics import gen_util_funs
@@ -26,8 +26,8 @@ from src.simulation.config.trailer_bicycle_config import (
 )
 from src.utils.track import TrackModel
 
-spec = KIN_FS
-kin_fn = kin
+spec = RAW_FS
+kin_fn = kin_zeros
 
 HISTORY = spec.H
 
@@ -47,7 +47,7 @@ loader = DataLoader.load(Path("./experiments/exp_007_vehicle_residual_dynamics/d
 x_mean, x_std = jnp.asarray(loader.x_mean), jnp.asarray(loader.x_std)
 y_mean, y_std = jnp.asarray(loader.y_mean), jnp.asarray(loader.y_std)
 
-model = TrailerModel(48, 4)
+model = TrailerModel(24, 4)
 _, state = nnx.split(model)
 ckpt = ocp.StandardCheckpointer()
 nnx.update(model, ckpt.restore(Path.cwd() / "src/learning/models/trained/trailer-nokin-best", state))
@@ -64,7 +64,7 @@ def build_planner_debug(all_samples, n_vis):
 
 dynamics, cost, bound, _ = gen_util_funs(
     scenario,
-    spec,
+    RAW_FS,
     kin_fn,
     model,
     loader,
@@ -96,7 +96,7 @@ mpc = MPPI_Jax_Debug(
     inverse_temp=1,
     K=500,
     step=0.05,
-    T=50,
+    T=80,
     alpha=0.05,
     history=HISTORY
 )
@@ -105,7 +105,7 @@ env.reset()
 observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
 
 history = jnp.zeros(HISTORY * (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM))
-
+ulast = jnp.array([0, 0])
 i = 0
 try:
     # Necessary, the model panics when seeing 0/default windoww
@@ -127,7 +127,7 @@ try:
                 # env.unwrapped.track._arc_samples[env.unwrapped._last_index],
             ]
         ) # env state is x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, steer, accel
-        curr = jnp.concatenate([main_slice, jnp.zeros(2), jnp.array([arclen])]) # Control is filled out inside
+        curr = jnp.concatenate([main_slice, ulast, jnp.array([arclen])]) # Control is filled out inside
 
         history = jnp.concatenate([history[(D_STATE_DIM + D_U_DIM + D_EXTRA_DIM):], curr])
 
@@ -144,6 +144,7 @@ try:
 
         n_viz = 50
         env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
+        ulast = u
 
         if i % 2 == 0:
             frame = env.render()

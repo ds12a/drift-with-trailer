@@ -4,7 +4,7 @@ from src.controllers.mpc.smppi_jax import SMPPI_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
 from src.controllers.mpc.debug.smppi_jax_debug import SMPPI_Jax_Debug
 
-from src.learning.models.trailer_spec import KIN_FS
+from src.learning.models.trailer_spec import spec
 
 from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs
 import time
@@ -213,36 +213,11 @@ env_kwargs = {
 }
 
 envs = [
-    TrailerBicycleEnv(
-        **env_kwargs,
-        scenario=TrailerBicycleEnvConfig(
-            ".", TrackConfig(mu=0.2, width=20), VehicleConfig(), SimulationConfig()
-        ),
-    ),
-    TrailerBicycleEnv(
-        **env_kwargs,
-        scenario=TrailerBicycleEnvConfig(
-            ".", TrackConfig(mu=0.4, width=20), VehicleConfig(), SimulationConfig()
-        ),
-    ),
-    TrailerBicycleEnv(
-        **env_kwargs,
-        scenario=TrailerBicycleEnvConfig(
-            ".", TrackConfig(mu=0.6, width=20), VehicleConfig(), SimulationConfig()
-        ),
-    ),
-    TrailerBicycleEnv(
-        **env_kwargs,
-        scenario=TrailerBicycleEnvConfig(
-            ".", TrackConfig(mu=0.8, width=20), VehicleConfig(), SimulationConfig()
-        ),
-    ),
-    TrailerBicycleEnv(
-        **env_kwargs,
-        scenario=TrailerBicycleEnvConfig(
-            ".", TrackConfig(mu=1, width=20), VehicleConfig(), SimulationConfig()
-        ),
-    ),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.2, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.4, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.6, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=0.8, width=20), VehicleConfig(), SimulationConfig())),
+    TrailerBicycleEnv(**env_kwargs, scenario=TrailerBicycleEnvConfig(".", TrackConfig(mu=1.0, width=20), VehicleConfig(), SimulationConfig())),
 ]
 
 controllers = []
@@ -258,5 +233,5 @@ for e_i, e in enumerate(envs):
         print()
         run_controller(c, data, e, e_i, c_i, 2000, True)
 
-d = data.store(KIN_FS.data_version, verbose=True)
+d = data.store(spec.data_version, verbose=True)
 d.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))

@@ -18,6 +18,9 @@ KIN_COLS = jnp.array([0, 1, 2, 3, 6, 7, 8])  # mu for kin prior
 VEL_COLS = jnp.array([2, 3])  # vx, vy -> FD -> ax, ay
 YAW_COLS = jnp.array([4, 5])  # w1, w2
 
+S_COLS = jnp.array([0, 1, 2, 3])   # state features (incl. yaw rates)
+C_COLS = jnp.array([7, 8])               # delta, acc
+
 fzr = V.mass * 9.8 * V.lf / (V.lf + V.lr) + V.trailer_mass * 9.8 * V.l2r * (
     V.lf + V.hitch_offset
 ) / ((V.lf + V.lr) * (V.l2f + V.l2r))
@@ -46,8 +49,10 @@ def make_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="kin-vy"):
 
     @jax.jit
     @jax.vmap
-    def in_fn(w):  # (H+F, 9) -> (H*6,)
-        return w[:H][:, IN_COLS].reshape(-1)
+    def in_fn(w):                            # (H+F, 9) -> (H*8,)
+        s = w[:H][:, S_COLS]                 # states, rows 0..H-1
+        c = w[1:H+1][:, C_COLS]              # controls, rows 1..H  <- shifted
+        return jnp.concatenate([s, c], axis=-1).reshape(-1)
 
     @jax.jit
     @jax.vmap
@@ -59,4 +64,4 @@ def make_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="kin-vy"):
     return FeatureSpec(in_fn, out_fn, H, F, train_frac, split_seed, f"v2-{tag}-H{H}-dt{dt}")
 
 
-KIN_FS = make_spec()
+KIN_FS = make_spec(H=8)

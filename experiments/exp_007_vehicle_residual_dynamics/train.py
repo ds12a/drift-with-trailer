@@ -6,6 +6,7 @@ from pathlib import Path
 from flax import nnx
 from src.learning.datasets.trailer_data import DataStore, DataLoader
 from src.learning.models.trailer_spec import KIN_FS
+from src.learning.models.trailer_spec_nores import RAW_FS, IN_COLS
 from src.learning.models.trailer_nn import TrailerModel
 import wandb
 
@@ -145,12 +146,12 @@ class LearnedDynamics:
             )
 
             if e > 0 and e % checkpoint_freq == 0:
-                self.save()
+                self.save(output="src/learning/models/trained/trailer-nokin")
                 if best is None or vl < best:
                     best = vl
                     wandb.run.summary["best_test_loss"] = vl
                     wandb.run.summary["best_epoch"] = e
-                    self.save(output="src/learning/models/trained/trailer-best")
+                    self.save(output="src/learning/models/trained/trailer-nokin-best")
 
     # def _unnormalize(self, dynamics):
     #     return dynamics * self.dynamics_std + self.dynamics_mean
@@ -167,35 +168,51 @@ class LearnedDynamics:
         restored_state = checkpointer.restore(source, state)
         nnx.update(self.model, restored_state)
 
+    def ax_floor(self, mu_col=6, a_col=8, chan=0):
+        """Bin ax residual (raw units) by mu x |throttle|. Prints std + count/1k per cell.
+        Reveals whether the ax floor is friction-saturation (grows w/ |a|, worse low mu)
+        or a fit/capacity issue (flat everywhere)."""
+        spec, W = self.data.spec, np.arange(self.data.spec.H + self.data.spec.F)
+        ys = np.asarray(self.data.y_std)[chan]
 
-class TrailerModel(nnx.Module):
-    def __init__(self, in_dim, out_dim, width=128, depth=2):
-        rng = nnx.Rngs(1248)
-        layers, d = [], in_dim
-        for _ in range(depth): # why do it this way??? FIXME: make less redundant?
-            layers += [nnx.Linear(d, width, rngs=rng), nnx.silu] 
-            d = width
-        layers.append(nnx.Linear(width, out_dim, rngs=rng))
-        self.model = nnx.Sequential(*layers) 
+        res, mu, a = [], [], []
+        for i in range(0, len(self.data.test), 4096):
+            idx = self.data.test[i : i + 4096]
+            w = self.data.data[idx[:, None] + W]                       # (B, H+F, D)
+            x = (spec.encode_x(w) - self.data.x_mean) / self.data.x_std
+            y = (spec.encode_y(w) - self.data.y_mean) / self.data.y_std
+            res.append(np.asarray(self.model(x)[:, chan] - y[:, chan]) * ys)  # raw units
+            k = w[:, spec.H - 1]                                        # row t
+            mu.append(np.asarray(k[:, mu_col])); a.append(np.abs(np.asarray(k[:, a_col])))
+        res, mu, a = map(np.concatenate, (res, mu, a))
 
-    def __call__(self, x):
-        return self.model(x)
-
+        print(f"\nax residual std (raw m/s^2), by mu x |throttle|:")
+        for m in np.unique(mu):
+            cells = []
+            for lo, hi in [(0, 0.2), (0.2, 0.6), (0.6, 1.01)]:
+                s = (mu == m) & (a >= lo) & (a < hi)
+                cells.append(f"{res[s].std():.2f}({s.sum()//1000}k)" if s.sum() else "  --  ")
+            print(f"  mu={m:.1f}   |a|<.2 {cells[0]:>10}   .2-.6 {cells[1]:>10}   >.6 {cells[2]:>10}")
+        print(f"  overall: {res.std():.3f}   (grows w/ |a| & low mu => friction floor; "
+              f"flat => fit issue)")
 
 if __name__ == "__main__":
+
+    spec = KIN_FS
+
     raw = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))
-    data = raw.build(KIN_FS, True)
+    data = raw.build(spec, True)
 
     wandb.init(
         project="Train",
         config={
-            "learning_rate": 1e-3,
+            "learning_rate": 5e-3,
             "batch_size": 4096,
-            "H": KIN_FS.H,
-            "F": KIN_FS.F,
-            "data_version": KIN_FS.data_version,
-            "split_seed": KIN_FS.split_seed,
-            "train_frac": KIN_FS.train_frac,
+            "H": spec.H,
+            "F": spec.F,
+            "data_version": spec.data_version,
+            "split_seed": spec.split_seed,
+            "train_frac": spec.train_frac,
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
@@ -203,11 +220,11 @@ if __name__ == "__main__":
     )
 
     learned = LearnedDynamics(
-        TrailerModel(24, 4),
-        data,
+        TrailerModel(spec.H * len(IN_COLS), 4), data,
         {"learning_rate": wandb.config.learning_rate},  # not wandb.config directly
         batch_size=wandb.config.batch_size,
     )
     learned.train(50)
     learned.save()
+    learned.ax_floor()
     data.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc1.npz"))
