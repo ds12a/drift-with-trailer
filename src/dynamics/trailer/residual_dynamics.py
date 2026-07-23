@@ -12,6 +12,7 @@ import orbax.checkpoint as ocp
 # from src.simulation.trailer_bicycle_env import TrailerBicycleEnv, VehicleState
 # from src.controllers.mpc.mppi_jax import MPPI_Jax
 from src.learning.models.trailer_nn import TrailerModel
+
 # from src.learning.models.trailer_spec import KIN_FS, kin
 # from src.learning.models.trailer_spec_nores import RAW_FS, kin_zeros
 from src.learning.datasets.trailer_data import DataLoader, FeatureSpec
@@ -26,7 +27,6 @@ from src.utils.track import TrackModel
 
 # spec = KIN_FS
 # kin_fn = kin_zeros
-
 
 
 def gen_util_funs(
@@ -52,11 +52,11 @@ def gen_util_funs(
     dt = params.simulation.dt
 
     M_OUT_DIM = 4
-    
+
     reverse = 1 if reverse else -1
     step = params.simulation.dt
     x_mean = jnp.asarray(loader.x_mean)
-    x_std  = jnp.asarray(loader.x_std)
+    x_std = jnp.asarray(loader.x_std)
     y_mean, y_std = jnp.asarray(loader.y_mean), jnp.asarray(loader.y_std)
 
     # print(x_mean, x_std, y_mean, y_std)
@@ -122,29 +122,38 @@ def gen_util_funs(
     def dynamics(x, u):  # passed as windows
         x_windows = x.reshape(H, D_STATE_DIM + D_U_DIM + D_EXTRA_DIM)
         old_u = x_windows[-1][-3:-1]
-        x_windows = x_windows.at[-1, -3:-1].set(u)
+        # x_windows = x_windows.at[-1, -3:-1].set(u)
         # x_windows[-1][-3], x_windows[-1][-2] = u[0], u[1]  # Control
 
         def slice_kin(window):
             hitch = window[2] - window[3]
-            
-            return jnp.stack([
-                jnp.sin(hitch),  # sh
-                jnp.cos(hitch),  # ch
-                window[4],  # vx
-                window[5],  # vy
-                window[6],  # mu
-                window[7],  # delta
-                window[8],  # a
-            ])
+
+            return jnp.stack(
+                [
+                    jnp.sin(hitch),  # sh
+                    jnp.cos(hitch),  # ch
+                    window[4],  # vx
+                    window[5],  # vy
+                    window[6],  # mu
+                    window[7],  # delta
+                    window[8],  # a
+                ]
+            )
+
         def slice_mod_raw(window):
             def row(w):
                 hitch = w[2] - w[3]
                 return jnp.stack([jnp.sin(hitch), jnp.cos(hitch), w[4], w[5], w[7], w[8]])
+
             rows = jax.vmap(row)(window)
             return (rows.reshape(-1) - x_mean) / x_std
-        
+
         kin_in = slice_kin(x_windows[-1]).flatten()
+
+        x_windows = x_windows.at[:, -3:-1].set(
+            jnp.concatenate([x_windows[1:, -3:-1], u[None, :]], axis=0)
+        )
+
         model_in = slice_mod_raw(x_windows).flatten()[None, ...]
 
         xpos, ypos, phi1, phi2, vx, vy, *_ = x_windows[-1]
@@ -168,23 +177,20 @@ def gen_util_funs(
 
         du = (u - old_u) / step  # Goofy
 
-        dx = jnp.array([
-            xdot, ydot, phi1dot, phi2dot, ax, ay, 0, du[0], du[1], track_vel
-        ])
+        dx = jnp.array([xdot, ydot, phi1dot, phi2dot, ax, ay, 0, du[0], du[1], track_vel])
         # dx_history = (x_windows[1:] - x_windows[:-1]) / dt
         # dx_window = jnp.concatenate([dx_history, dx[None, :]], axis=0)
         # return dx_window.flatten()
         return dx
 
-
     @jax.jit
     def cost(x, u, t):
 
         x_windows = x.reshape(H, D_STATE_DIM + D_U_DIM + D_EXTRA_DIM)
-        x = x_windows[-1] # discard others
+        x = x_windows[-1]  # discard others
         xpos, ypos, phi1, phi2, vx, vy, *_ = x
         arc_len = x[-1]
-        
+
         # Tunable values
         gvx = vx * jnp.cos(phi1) - vy * jnp.sin(phi1)
         gvy = vx * jnp.sin(phi1) + vy * jnp.cos(phi1)
@@ -221,7 +227,7 @@ def gen_util_funs(
             # ) + p_weight * p_slow_weight * jnp.maximum(0, v_baseline - v_car)
 
         c = (
-            0.99**t * (1e12 * violation)
+            0.99**t * (1e3 * violation)
             + v_term
             + projection_curr.lateral_error**2 * c_weight
             + jnp.abs(hitch_angle) * a_weight
@@ -229,11 +235,11 @@ def gen_util_funs(
 
         # jax.debug.print("cost {c}", c=c)
         return c
-    
 
     def bound(u):
         return jnp.clip(u, jnp.array([-1, -1]), jnp.array([1, 1]))
 
     def bound_der(u):
         return u
+
     return dynamics, cost, bound, bound_der

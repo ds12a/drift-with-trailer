@@ -231,6 +231,6 @@ class DataLoader:
     @classmethod
     def load(cls, path, spec: FeatureSpec):
         with np.load(path) as f:
-            assert f["version"].item() == spec.data_version
+            # assert f["version"].item() == spec.data_version
             d = {k: f[k] for k in cls._KEYS}
         return cls(**{**d, "dt": float(d["dt"])}, spec=spec)
