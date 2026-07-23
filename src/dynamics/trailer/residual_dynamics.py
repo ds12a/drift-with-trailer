@@ -121,6 +121,7 @@ def gen_util_funs(
     # pred [ax, ay, phi1dot, phi2dot]
     def dynamics(x, u):  # passed as windows
         x_windows = x.reshape(H, D_STATE_DIM + D_U_DIM + D_EXTRA_DIM)
+        old_u = x_windows[-1][-3:-1]
         x_windows = x_windows.at[-1, -3:-1].set(u)
         # x_windows[-1][-3], x_windows[-1][-2] = u[0], u[1]  # Control
 
@@ -165,7 +166,6 @@ def gen_util_funs(
         raw_diff = projection_next.arc_length - projection_curr.arc_length
         track_vel = (raw_diff - track.length * jnp.round(raw_diff / track.length)) / dt
 
-        old_u = x_windows[-1][-3:-1]
         du = (u - old_u) / step  # Goofy
 
         dx = jnp.array([

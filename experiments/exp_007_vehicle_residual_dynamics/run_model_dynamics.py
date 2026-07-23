@@ -105,7 +105,7 @@ env.reset()
 observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
 
 history = jnp.zeros(HISTORY * (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM))
-
+ulast = jnp.array([0, 0])
 i = 0
 try:
     # Necessary, the model panics when seeing 0/default windoww
@@ -127,7 +127,7 @@ try:
                 # env.unwrapped.track._arc_samples[env.unwrapped._last_index],
             ]
         ) # env state is x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, steer, accel
-        curr = jnp.concatenate([main_slice, jnp.zeros(2), jnp.array([arclen])]) # Control is filled out inside
+        curr = jnp.concatenate([main_slice, ulast, jnp.array([arclen])]) # Control is filled out inside
 
         history = jnp.concatenate([history[(D_STATE_DIM + D_U_DIM + D_EXTRA_DIM):], curr])
 
@@ -144,6 +144,7 @@ try:
 
         n_viz = 50
         env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
+        ulast = u
 
         if i % 2 == 0:
             frame = env.render()
