@@ -4,7 +4,7 @@ from src.controllers.mpc.smppi_jax import SMPPI_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
 from src.controllers.mpc.debug.smppi_jax_debug import SMPPI_Jax_Debug
 
-from src.learning.models.trailer_spec import spec
+from src.learning.models.trailer_spec import KIN_FS
 
 from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs
 import time
@@ -132,7 +132,6 @@ def run_controller(
 
     env.close()
 
-    # return state, dynamics
 
 
 def build_controller(config):
@@ -149,7 +148,8 @@ def build_controller(config):
 
 mppi_cfg_fwd = [
     [
-        jnp.diag(jnp.array([3e-3, 0.2])),
+        # jnp.diag(jnp.array([3e-3, 0.2])),
+        jnp.diag(jnp.array([1e-15, 1e-15])), # for testing zero control
     ],
     {
         "inverse_temp": 1,
@@ -171,7 +171,8 @@ mppi_cfg_fwd = [
 
 mppi_cfg_rev = [
     [
-        jnp.diag(jnp.array([3e-3, 0.2])),
+        # jnp.diag(jnp.array([3e-3, 0.2])),
+        jnp.diag(jnp.array([1e-15, 1e-15])), # for testing zero control
     ],
     {
         "inverse_temp": 0.5,
@@ -191,6 +192,10 @@ mppi_cfg_rev = [
     },
 ]
 
+class ZeroCtl:
+    def run_mpc(*args, **kwargs):
+        return 
+
 # State is:
 # [sin(hitch), cos(hitch), vx, vy, truck_yaw_rate, yaw_trailer_rate, mu, delta, brake/accel]
 #
@@ -198,6 +203,7 @@ mppi_cfg_rev = [
 # [hitch_rate, ...]
 
 data = DataCollector(9, 0.05)
+ds = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))
 
 # runs = [
 #     (build_controller(mppi_cfg_fwd), 0, jnp.sin(jnp.)), # controller, gaussian noise mag, sin freq, sin amp
@@ -230,8 +236,9 @@ for v in [25, 15, 5]:
 
 for e_i, e in enumerate(envs):
     for c_i, c in enumerate(controllers):
-        print()
-        run_controller(c, data, e, e_i, c_i, 2000, True)
+        # print()
+        run_controller(c, data, e, e_i, c_i, 50, True)
 
-d = data.store(spec.data_version, verbose=True)
-d.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))
+# ds = data.store(spec.data_version, verbose=True)
+# ds.ingest(data)
+# ds.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw_aug.npz"))

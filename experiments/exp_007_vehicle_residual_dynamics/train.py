@@ -146,12 +146,12 @@ class LearnedDynamics:
             )
 
             if e > 0 and e % checkpoint_freq == 0:
-                self.save(output="src/learning/models/trained/trailer-nokin")
+                self.save(output="src/learning/models/trained/trailer-kin-test-512")
                 if best is None or vl < best:
                     best = vl
                     wandb.run.summary["best_test_loss"] = vl
                     wandb.run.summary["best_epoch"] = e
-                    self.save(output="src/learning/models/trained/trailer-nokin-best")
+                    self.save(output="src/learning/models/trained/trailer-kin-512-test-best")
 
     # def _unnormalize(self, dynamics):
     #     return dynamics * self.dynamics_std + self.dynamics_mean
@@ -206,7 +206,7 @@ if __name__ == "__main__":
     wandb.init(
         project="Train",
         config={
-            "learning_rate": 5e-3,
+            "learning_rate": 6e-3,
             "batch_size": 4096,
             "H": spec.H,
             "F": spec.F,
@@ -224,7 +224,9 @@ if __name__ == "__main__":
         {"learning_rate": wandb.config.learning_rate},  # not wandb.config directly
         batch_size=wandb.config.batch_size,
     )
-    learned.train(50)
+    # learned.load(Path.cwd() / "src/learning/models/trained/trailer-kin-512-best")
+
+    learned.train(250)
     learned.save()
     learned.ax_floor()
     data.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc1.npz"))

@@ -39,7 +39,7 @@ K_STATE_DIM = 7
 M_STATE_DIM = 6
 
 scenario = TrailerBicycleEnvConfig(
-    ".", TrackConfig(mu=0.6, width=20), VehicleConfig(), SimulationConfig()
+    ".", TrackConfig(mu=1.0, width=20), VehicleConfig(), SimulationConfig()
 )
 
 
@@ -69,7 +69,7 @@ dynamics, cost, bound, _ = gen_util_funs(
     model,
     loader,
     reverse=False,
-    v_target=25,
+    v_target=-25,
     p_weight=1e2,
     p_slow_weight=1e0,
     # s_weight=2e1,
