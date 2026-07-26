@@ -62,6 +62,7 @@ def rollout(
 
             new_S = S + cost(new_x, v, i) + gamma * jnp.einsum("n,nm,m->", u, inv_cv, bounded_noise)
             new_i = i + 1
+            # jax.debug.print("x: {}", x[-step_dim:])
 
             return (new_x, new_S, new_i), (new_x, new_S, v)
 

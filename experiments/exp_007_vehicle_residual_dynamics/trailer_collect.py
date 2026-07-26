@@ -29,6 +29,45 @@ from src.simulation.config.trailer_bicycle_config import (
     SimulationConfig,
 )
 
+spec = KIN_FS
+
+# An attempt to combat dataset contamination
+A_HARD     = 1.5 * 9.8   # m/s^2, per-axis FD accel
+V_HARD     = 60.0        # m/s
+W_HARD     = 6.0         # rad/s
+HITCH_HARD = 2.0         # rad (~115 deg); past this the trailer has folded
+BACKOFF    = 2           # rows dropped before the first hard violation
+MIN_LEN    = KIN_FS.H + KIN_FS.F   # below this, _windows() yields zero windows
+
+MAX_HITCH = VehicleConfig().max_hitch
+
+class CollectStats:
+    def __init__(self):
+        self.n = self.rows_in = self.rows_out = self.soft = 0
+        self.trunc = self.short = 0
+
+    def seen(self, T, n, soft):
+        self.n += 1
+        self.rows_in += T
+        self.trunc += (n < T)
+        if n < MIN_LEN:
+            self.short += 1
+            return
+        self.rows_out += n
+        self.soft += soft
+
+    def report(self):
+        print(
+            f"\n[collect] {self.n} candidates | rows {self.rows_in} -> {self.rows_out} "
+            f"({100*self.rows_out/max(self.rows_in,1):.1f}% kept)\n"
+            f"          truncated {self.trunc} ({100*self.trunc/max(self.n,1):.1f}%), "
+            f"dropped <MIN_LEN {self.short}\n"
+            f"          rows past max_hitch retained: {self.soft} "
+            f"({100*self.soft/max(self.rows_out,1):.2f}%)  <- jackknife coverage"
+        )
+
+
+stats = CollectStats()
 
 def build_planner_debug(all_samples, n_vis):
     if all_samples is None:
@@ -46,23 +85,37 @@ def build_planner_debug(all_samples, n_vis):
 # x, y, phi_1, phi_2, v_1x, v_1y, phi_1_dot, phi_2_dot, mu, arc_len = state input
 @jax.jit
 def convert(xhist, uhist, dt):
-
-    # Trimming as otherwise there is too much data
     xhist = xhist[:3, ...]
     uhist = uhist[:3, ...]
 
-    B = xhist.shape[0]
-    T = xhist.shape[1]
-
     hitch = xhist[..., 2] - xhist[..., 3]
-    sh = jnp.sin(hitch)
-    ch = jnp.cos(hitch)
+    sh, ch = jnp.sin(hitch), jnp.cos(hitch)
+    in_state_clean = jnp.concatenate([sh[..., None], ch[..., None], xhist[..., 4:9]], -1)
+    states = jnp.concatenate([in_state_clean[:, :-1, :], uhist[:, :-1, :]], -1)
 
-    in_state_clean = jnp.concatenate([sh[..., None], ch[..., None], xhist[..., 4:9]], axis=-1)
-    states = jnp.concatenate([in_state_clean[:, :-1, :], uhist[:, :-1, :]], axis=-1)
-    # dynamics = (in_state_clean[:, 1:, :] - in_state_clean[:, :-1, :])[..., :-1] / dt
+    h  = jnp.arctan2(states[..., 0], states[..., 1])
+    vx, vy = states[..., 2], states[..., 3]
+    w1, w2 = states[..., 4], states[..., 5]
 
-    return states
+    acc = jnp.diff(states[..., 2:4], axis=1) / dt             # (B, T-2, 2)
+    acc = jnp.concatenate([jnp.zeros_like(acc[:, :1]), acc], 1) 
+
+    ok = (
+        jnp.isfinite(states).all(-1)
+        & (jnp.abs(h) < HITCH_HARD)
+        & (jnp.abs(vx) < V_HARD) & (jnp.abs(vy) < V_HARD)
+        & (jnp.abs(w1) < W_HARD) & (jnp.abs(w2) < W_HARD)
+        & (jnp.abs(acc) < A_HARD).all(-1)
+    ) 
+
+    T = ok.shape[1]
+    n_lead = jnp.cumprod(ok, axis=1).sum(1)                    # leading valid rows
+    n_keep = jnp.where(n_lead == T, n_lead, jnp.maximum(n_lead - BACKOFF, 0))
+
+    kept = jnp.arange(T)[None] < n_keep[:, None]
+    n_soft = ((jnp.abs(h) > MAX_HITCH) & kept).sum(1)          # jackknife rows retained
+
+    return states, n_keep, n_soft
 
 
 # Controller generalized mpc to support other predefined actions
@@ -107,8 +160,16 @@ def run_controller(
 
             u, xhist, vhist = controller.run_mpc(mpc_state)
 
-            for state_i in convert(xhist, vhist, env.scenario.simulation.dt):
-                data.add(np.array(state_i), env_i, ctl_i, i)
+            states, n_keep, n_soft = convert(xhist, vhist, env.scenario.simulation.dt)
+            states = np.asarray(states)
+            n_keep = np.asarray(n_keep)
+            n_soft = np.asarray(n_soft)
+
+            for b in range(states.shape[0]):
+                n = int(n_keep[b])
+                stats.seen(states.shape[1], n, int(n_soft[b]))
+                if n >= MIN_LEN:
+                    data.add(states[b, :n], env_i, ctl_i, i)
 
             action = np.array([u[0], u[1]])
 
@@ -148,8 +209,8 @@ def build_controller(config):
 
 mppi_cfg_fwd = [
     [
-        # jnp.diag(jnp.array([3e-3, 0.2])),
-        jnp.diag(jnp.array([1e-15, 1e-15])), # for testing zero control
+        jnp.diag(jnp.array([3e-3, 0.2])),
+        # jnp.diag(jnp.array([1e-15, 1e-15])), # for testing zero control
     ],
     {
         "inverse_temp": 1,
@@ -171,8 +232,8 @@ mppi_cfg_fwd = [
 
 mppi_cfg_rev = [
     [
-        # jnp.diag(jnp.array([3e-3, 0.2])),
-        jnp.diag(jnp.array([1e-15, 1e-15])), # for testing zero control
+        jnp.diag(jnp.array([3e-3, 0.2])),
+        # jnp.diag(jnp.array([1e-15, 1e-15])), # for testing zero control
     ],
     {
         "inverse_temp": 0.5,
@@ -203,7 +264,7 @@ class ZeroCtl:
 # [hitch_rate, ...]
 
 data = DataCollector(9, 0.05)
-ds = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))
+# ds = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))
 
 # runs = [
 #     (build_controller(mppi_cfg_fwd), 0, jnp.sin(jnp.)), # controller, gaussian noise mag, sin freq, sin amp
@@ -236,9 +297,10 @@ for v in [25, 15, 5]:
 
 for e_i, e in enumerate(envs):
     for c_i, c in enumerate(controllers):
-        # print()
-        run_controller(c, data, e, e_i, c_i, 50, True)
+        run_controller(c, data, e, e_i, c_i, 2000, True)
+        stats.report()
 
-# ds = data.store(spec.data_version, verbose=True)
+
+ds = data.store(spec.data_version, verbose=True)
 # ds.ingest(data)
-# ds.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw_aug.npz"))
+ds.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw_aug.npz"))

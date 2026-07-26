@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
+from typing_extensions import override
 import numpy as np
 import jax
 import json
@@ -55,7 +56,9 @@ class DataCollector:
         if verbose:
             print(f"Generating DataStore, data is of size {data.shape}")
 
-        return DataStore(data=data, traj_len=traj_len, meta=meta, dt=self.dt, version=version)
+        return DataStore(
+            data=data, traj_len=traj_len, meta=meta, dt=self.dt, version=version
+        )
 
 
 @dataclass(frozen=True)
@@ -95,23 +98,14 @@ class DataStore:
         with np.load(path) as f:
             d = {k: f[k] for k in cls._KEYS}
         return cls(**{**d, "dt": float(d["dt"]), "version": str(d["version"])})
-    
+
     def ingest(self, dc: DataCollector):  # unsafe, does not check version
         ds = dc.store(self.version, True)
         object.__setattr__(self, "data", np.concatenate([self.data, ds.data], axis=0))
         object.__setattr__(self, "meta", np.concatenate([self.meta, ds.meta], axis=0))
-        object.__setattr__(self, "traj_len", np.concatenate((self.traj_len, ds.traj_len), axis=0))
-
-
-    def build(self, spec: FeatureSpec, verbose=False):
-        """
-        Builds masks for training, computes statistics for normalization.
-        Actual normalization happens during training
-        """
-
-        if verbose:
-            print(f"Building DataLoader, data {self.data.shape}")
-        return DataLoader(self.data, self.traj_len, self.meta, self.dt, spec)
+        object.__setattr__(
+            self, "traj_len", np.concatenate((self.traj_len, ds.traj_len), axis=0)
+        )
 
 
 @dataclass(frozen=True)
@@ -139,14 +133,23 @@ class DataLoader:
         object.__setattr__(self, "train", train)
         object.__setattr__(self, "test", test)
 
-        if self.x_mean is None or self.y_mean is None or self.x_std is None or self.y_std is None:
-            for k, v in zip(("x_mean", "x_std", "y_mean", "y_std"), self.compute_stats()):
+        if (
+            self.x_mean is None
+            or self.y_mean is None
+            or self.x_std is None
+            or self.y_std is None
+        ):
+            for k, v in zip(
+                ("x_mean", "x_std", "y_mean", "y_std"), self.compute_stats()
+            ):
                 object.__setattr__(self, k, v)
 
     def get_data(self, batch_size, key=None):
         key = jax.random.PRNGKey(137) if key is None else key
         k1, k2 = jax.random.split(key)
-        return self._batch(self.train, batch_size, k1), self._batch(self.test, batch_size, k2)
+        return self._batch(self.train, batch_size, k1), self._batch(
+            self.test, batch_size, k2
+        )
 
     def _batch(self, idx, B, key):
         spec = self.spec
@@ -172,7 +175,9 @@ class DataLoader:
         t_n = len(self.traj_len)
         keep = np.zeros(t_n, bool)
         keep[
-            np.random.default_rng(spec.split_seed).permutation(t_n)[: int(t_n * spec.train_frac)]
+            np.random.default_rng(spec.split_seed).permutation(t_n)[
+                : int(t_n * spec.train_frac)
+            ]
         ] = True
         m = keep[tid]
         return valid[m], valid[~m]
@@ -186,7 +191,9 @@ class DataLoader:
         n_win = np.maximum(traj_len - spec.H - spec.F + 1, 0)
         base = np.repeat(traj_start, n_win)
         offs = np.arange(int(n_win.sum())) - np.repeat(np.cumsum(n_win) - n_win, n_win)
-        return (base + offs).astype(np.int32), np.repeat(np.arange(len(traj_len)), n_win)
+        return (base + offs).astype(np.int32), np.repeat(
+            np.arange(len(traj_len)), n_win
+        )
 
     def compute_stats(self, chunk=1 << 19):
         """
@@ -233,7 +240,11 @@ class DataLoader:
     #     object.__setattr__(self, "y_std", ys)
 
     def save(self, path):
-        np.savez(path, **{k: getattr(self, k) for k in self._KEYS}, version=self.spec.data_version)
+        np.savez(
+            path,
+            **{k: getattr(self, k) for k in self._KEYS},
+            version=self.spec.data_version,
+        )
 
     @classmethod
     def load(cls, path, spec: FeatureSpec):
@@ -242,3 +253,58 @@ class DataLoader:
             d = {k: f[k] for k in cls._KEYS}
         return cls(**{**d, "dt": float(d["dt"])}, spec=spec)
 
+
+@dataclass(frozen=True)
+class DataLoaderBlocked(DataLoader):
+
+    block_width: int = (
+        1  # Because of rollout structure, need to implement temporal blocking for valid train/test
+    )
+    stride: int = 1
+
+    @override
+    def _split(self):
+        spec = self.spec
+        period = self.block_width + self.stride
+        valid, tid = self._windows(self.traj_len)
+        run, ctrl, step = self.meta.T
+
+        blk = step // period
+        key = (run * (ctrl.max() + 1) + ctrl) * (blk.max() + 1) + blk
+        _, bid = np.unique(key, return_inverse=True)
+        n_b = bid.max() + 1
+
+        keep = np.zeros(n_b, bool)
+        keep[
+            np.random.default_rng(spec.split_seed).permutation(n_b)[: int(n_b * spec.train_frac)
+            ]
+        ] = True
+
+        alive = (step % period) < self.block_width  # purge the tail
+
+        tr = (keep[bid] & alive)[tid]
+        te = (~keep[bid] & alive)[tid]
+        return valid[tr], valid[te]
+
+
+def build(
+    self, spec: FeatureSpec, loader_classref: type[DataLoader], w=1, s=1, verbose=False
+):
+    """
+    Builds masks for training, computes statistics for normalization.
+    Actual normalization happens during training
+    """
+
+    if verbose:
+        print(f"Building DataLoader, data {self.data.shape}")
+    if loader_classref == DataLoader:
+        return DataLoader(self.data, self.traj_len, self.meta, self.dt, spec)
+    elif loader_classref == DataLoaderBlocked:
+        return DataLoaderBlocked(
+            self.data, self.traj_len, self.meta, self.dt, spec, block_width=w, stride=s
+        )
+    else:
+        raise NotImplementedError()
+
+
+DataStore.build = build

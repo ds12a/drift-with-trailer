@@ -4,7 +4,7 @@ import numpy as np
 import optax
 from pathlib import Path
 from flax import nnx
-from src.learning.datasets.trailer_data import DataStore, DataLoader
+from src.learning.datasets.trailer_data import DataStore, DataLoader, DataLoaderBlocked
 from src.learning.models.trailer_spec import KIN_FS
 from src.learning.models.trailer_spec_nores import RAW_FS, IN_COLS
 from src.learning.models.trailer_nn import TrailerModel
@@ -70,7 +70,7 @@ def eval_step(model, state):
     return model(state[None, ...])[0]
 
 
-CHANNELS = ("ax", "ay", "w1", "w2")
+CHANNELS = ("ax", "ay", "alpha1", "alpha2")
 
 
 class LearnedDynamics:
@@ -97,8 +97,9 @@ class LearnedDynamics:
         self.test_loss_history = []
         self.y_std = np.asarray(data.y_std)
 
-    def train(self, epochs, checkpoint_freq=5):
+    def train(self, epochs, checkpoint_freq=1):
         best = None
+        best_epoch = 0
         for e in range(epochs):
             train, test = self.data.get_data(self.batch_size, jax.random.fold_in(self.key, e))
             for i, batch in enumerate(train):
@@ -127,6 +128,8 @@ class LearnedDynamics:
             wandb.log(
                 {
                     "epoch": e,
+                    "progression/best_rmse": best,
+                    "progression/best_epoch": best_epoch,
                     "train/loss": tl,
                     "test/loss": vl,
                     "test/rmse": np.sqrt(vl),
@@ -143,15 +146,17 @@ class LearnedDynamics:
                 + " ".join(f"{c}:{v:.3f}" for c, v in zip(CHANNELS, te["channel_losses"]))
                 + "\traw RMSE: "
                 + "  ".join(f"{c}:{r:.4f}" for c, r in zip(CHANNELS, raw_rmse))
+                + f"\tbest epoch: {best_epoch}, eval: {best}"
             )
 
             if e > 0 and e % checkpoint_freq == 0:
-                self.save(output="src/learning/models/trained/trailer-kin-test-512")
+                self.save(output=f"src/learning/models/trained/{wandb.config.run_id}")
                 if best is None or vl < best:
                     best = vl
+                    best_epoch = e
                     wandb.run.summary["best_test_loss"] = vl
                     wandb.run.summary["best_epoch"] = e
-                    self.save(output="src/learning/models/trained/trailer-kin-512-test-best")
+                    self.save(output=f"src/learning/models/trained/{wandb.config.run_id}_best")
 
     # def _unnormalize(self, dynamics):
     #     return dynamics * self.dynamics_std + self.dynamics_mean
@@ -198,16 +203,16 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
-    spec = KIN_FS
+    spec = RAW_FS   
 
-    raw = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw.npz"))
-    data = raw.build(spec, True)
+    raw = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw_aug.npz"))
+    data = raw.build(spec, DataLoaderBlocked, w=40, s=40)
 
     wandb.init(
         project="Train",
         config={
-            "learning_rate": 6e-3,
-            "batch_size": 4096,
+            "learning_rate":2e-3,
+            "batch_size": 2048,
             "H": spec.H,
             "F": spec.F,
             "data_version": spec.data_version,
@@ -216,6 +221,7 @@ if __name__ == "__main__":
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
+            "run_id": "trailer-h4-128-4l-pruned-accel-augsplit2"
         },
     )
 
@@ -225,8 +231,9 @@ if __name__ == "__main__":
         batch_size=wandb.config.batch_size,
     )
     # learned.load(Path.cwd() / "src/learning/models/trained/trailer-kin-512-best")
-
-    learned.train(250)
-    learned.save()
-    learned.ax_floor()
-    data.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc1.npz"))
+    try:
+        learned.train(250)
+    # learned.save()
+    finally:
+        learned.ax_floor()
+        data.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc2.npz"))

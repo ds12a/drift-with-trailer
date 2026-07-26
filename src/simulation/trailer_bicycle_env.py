@@ -75,7 +75,7 @@ class DynamicTrailerBicycleModel:
             x=x,
             y=y,
             yaw_truck=yaw,
-            yaw_trailer=yaw + 0.5,
+            yaw_trailer=yaw,
             vx=speed,
             vy=0.0,
             yaw_truck_rate=0.0,
@@ -280,9 +280,11 @@ class TrailerBicycleEnv(gym.Env):
         render_mode: str | None = None,
         render_width: int = 1280,
         render_height: int = 720,
-        scenario = None
+        scenario = None,
+        v_init = 6.0,
     ) -> None:
         super().__init__()
+        self.v_init = v_init
 
         if scenario is None:
             scenario = TrailerBicycleEnvConfig(
@@ -340,7 +342,7 @@ class TrailerBicycleEnv(gym.Env):
             heading_error = float(
                 initial_heading_error if initial_heading_error is not None else 0.0
             )
-            speed = float(initial_speed if initial_speed is not None else 8.0)
+            speed = float(initial_speed if initial_speed is not None else self.v_init)
             return self.dynamics.initial_state(
                 self.track,
                 progress=progress,
@@ -349,7 +351,7 @@ class TrailerBicycleEnv(gym.Env):
                 speed=speed,
             )
 
-        return self.dynamics.initial_state(self.track, progress=0.0, speed=8.0)
+        return self.dynamics.initial_state(self.track, progress=0.0, speed=self.v_init)
 
     def _observation(self) -> np.ndarray:
         assert self._state is not None

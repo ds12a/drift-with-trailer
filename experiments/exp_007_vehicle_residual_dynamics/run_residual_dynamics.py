@@ -49,10 +49,12 @@ loader = DataLoader.load(Path("./experiments/exp_007_vehicle_residual_dynamics/d
 x_mean, x_std = jnp.asarray(loader.x_mean), jnp.asarray(loader.x_std)
 y_mean, y_std = jnp.asarray(loader.y_mean), jnp.asarray(loader.y_std)
 
-model = TrailerModel(48, 4)
+print (x_mean, x_std, y_mean, y_std)
+
+model = TrailerModel(24, 4)
 _, state = nnx.split(model)
 ckpt = ocp.StandardCheckpointer()
-nnx.update(model, ckpt.restore(Path.cwd() / "src/learning/models/trained/trailer-kin-512-best", state))
+nnx.update(model, ckpt.restore(Path.cwd() / "src/learning/models/trained/trailer-h4-256-pruned_best", state))
 
 def build_planner_debug(all_samples, n_vis):
     if all_samples is None:
@@ -64,7 +66,7 @@ def build_planner_debug(all_samples, n_vis):
     cand = np.asarray(all_samples[idx, :, :2])  # (n, T, 2), small transfer
     return {"candidate_xy": cand}
 
-v_target = 60 / 3.6
+v_target = -60 / 3.6
 
 dynamics, cost, bound, _ = res_util(
     scenario,
@@ -100,7 +102,7 @@ mpc = MPPI_Jax_Debug(
     inverse_temp=1,
     K=500,
     step=0.05,
-    T=50,
+    T=55,
     alpha=0.05,
     history=HISTORY
 )
@@ -113,7 +115,7 @@ history = jnp.zeros(HISTORY * (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM))
 i = 0
 try:
     # Necessary, the model panics when seeing 0/default windoww
-    for _ in range(HISTORY+1):
+    for _ in range(HISTORY+2):
 
         # Kin
         dynamics_kin, cost_kin, bound_kin, _ = kin_util(
@@ -198,7 +200,7 @@ try:
             cv2.waitKey(1)
 
         if terminated:
-            env.reset()
+            break
 
         
 finally:

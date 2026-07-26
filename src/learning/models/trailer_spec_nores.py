@@ -13,13 +13,12 @@ Kinematics gives [ax, 0, phi1dot, phi2dot]
 
 
 V = VehicleConfig()
-IN_COLS  = jnp.array([0, 1, 2, 3, 7, 8])   # sh, ch, vx, vy, delta, accel
-KIN_COLS = jnp.array([0, 1, 2, 3, 6, 7, 8])  # mu for kin prior
-VEL_COLS = jnp.array([2, 3])               # vx, vy -> FD -> ax, ay
-YAW_COLS = jnp.array([4, 5])               # w1, w2
+IN_COLS  = jnp.array([0, 1, 2, 3, 4, 5, 7, 8])   # sh, ch, vx, vy, phi1dot, phi2dot, delta, accel
+# KIN_COLS = jnp.array([0, 1, 2, 3, 6, 7, 8])  # mu for kin prior
+VEL_COLS = jnp.array([2, 3, 4, 5])             # FD for accel
 
 
-S_COLS = jnp.array([0, 1, 2, 3])   # state features (incl. yaw rates)
+S_COLS = jnp.array([0, 1, 2, 3, 4, 5])   # state features (incl. yaw rates)
 C_COLS = jnp.array([7, 8])               # delta, acc
 
 fzr = V.mass * 9.8 * V.lf / (
@@ -68,8 +67,8 @@ def make_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="kin-vy"):
     @jax.vmap
     def out_fn(w):                      # (H+F, 9) -> (4,)
         k, kp = w[H - 1], w[H]
-        acc = (kp[VEL_COLS] - k[VEL_COLS]) / dt
-        return jnp.concatenate([acc, k[YAW_COLS]]) # - kin(k[KIN_COLS])
+        return (kp[VEL_COLS] - k[VEL_COLS]) / dt
+        # return jnp.concatenate([acc, k[YAW_COLS]]) # - kin(k[KIN_COLS])
 
     return FeatureSpec(in_fn, out_fn, H, F, train_frac, split_seed,
                        f"v2-{tag}-H{H}-dt{dt}")
