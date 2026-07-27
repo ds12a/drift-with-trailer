@@ -39,7 +39,7 @@ def gen_util_funs(
     spec: FeatureSpec,
     kin_fn,
     model: TrailerModel,
-    loader: DataLoader,
+    norm_stats: dict,
     reverse=False,
     v_target=None,
     p_weight=1e4,
@@ -55,9 +55,9 @@ def gen_util_funs(
 
     reverse = 1 if reverse else -1
     step = params.simulation.dt
-    x_mean = jnp.asarray(loader.x_mean)
-    x_std = jnp.asarray(loader.x_std)
-    y_mean, y_std = jnp.asarray(loader.y_mean), jnp.asarray(loader.y_std)
+    
+    x_mean, x_std = jnp.asarray(norm_stats["x_mean"]), jnp.asarray(norm_stats["x_std"])
+    y_mean, y_std = jnp.asarray(norm_stats["y_mean"]), jnp.asarray(norm_stats["y_std"])
 
     # print(x_mean, x_std, y_mean, y_std)
 
@@ -122,23 +122,6 @@ def gen_util_funs(
     def dynamics(x, u):  # passed as windows
         x_windows = x.reshape(H, D_STATE_DIM + D_U_DIM + D_EXTRA_DIM)
         old_u = x_windows[-1][-3:-1]
-        # x_windows = x_windows.at[-1, -3:-1].set(u)
-        # x_windows[-1][-3], x_windows[-1][-2] = u[0], u[1]  # Control
-
-        # def slice_kin(window):
-        #     hitch = window[2] - window[3]
-
-        #     return jnp.stack(
-        #         [
-        #             jnp.sin(hitch),  # sh
-        #             jnp.cos(hitch),  # ch
-        #             window[4],  # vx
-        #             window[5],  # vy
-        #             window[6],  # mu
-        #             window[7],  # delta
-        #             window[8],  # a
-        #         ]
-        #     )
 
         def slice_mod_raw(window):
             def row(w):
@@ -147,8 +130,6 @@ def gen_util_funs(
 
             rows = jax.vmap(row)(window)
             return (rows.reshape(-1) - x_mean) / x_std
-
-        # kin_in = slice_kin(x_windows[-1]).flatten()
 
         x_windows = x_windows.at[:, -3:-1].set(
             jnp.concatenate([x_windows[1:, -3:-1], u[None, :]], axis=0)

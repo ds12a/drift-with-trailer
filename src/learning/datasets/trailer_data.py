@@ -239,6 +239,15 @@ class DataLoader:
     #     object.__setattr__(self, "y_mean", ym)
     #     object.__setattr__(self, "y_std", ys)
 
+    def norm_to_json(self, path):
+        with open(path, "w") as f:
+            json.dump({
+                "x_mean": self.x_mean.tolist(),
+                "x_std": self.x_std.tolist(),
+                "y_mean": self.y_mean.tolist(),
+                "y_std": self.y_std.tolist(),
+            }, f)
+
     def save(self, path):
         np.savez(
             path,

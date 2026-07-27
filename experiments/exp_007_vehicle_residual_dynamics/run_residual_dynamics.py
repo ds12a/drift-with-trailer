@@ -1,3 +1,7 @@
+"""
+This is an OUTDATED file that contained the driver code for the old residual model formulation.
+"""
+
 import cv2
 import numpy as np
 import time

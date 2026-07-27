@@ -210,10 +210,12 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
+    NPZ_SAVE_HEAD = "data_proc2"
+
     spec = SPEC   
 
     raw = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw_aug.npz"))
-    data = raw.build(spec, DataLoaderBlocked, w=40, s=40)
+    data: DataLoader = raw.build(spec, DataLoaderBlocked, w=40, s=40)
 
     wandb.init(
         project="Train",
@@ -243,4 +245,5 @@ if __name__ == "__main__":
     # learned.save()
     finally:
         learned.ax_floor()
-        data.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc2.npz"))
+        data.save(Path(f"./experiments/exp_007_vehicle_residual_dynamics/{NPZ_SAVE_HEAD}.npz"))
+        data.norm_to_json(Path(f"./experiments/exp_007_vehicle_residual_dynamics/{NPZ_SAVE_HEAD}_stats.json"))
