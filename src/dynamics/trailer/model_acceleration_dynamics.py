@@ -43,11 +43,11 @@ def gen_util_funs(
     a_weight=1e5,
 ):
 
-    D_STATE_DIM = 7
+    D_STATE_DIM = 8
     D_U_DIM = 2
     D_EXTRA_DIM = 1
-    K_STATE_DIM = 7
-    M_STATE_DIM = 6
+    # K_STATE_DIM = 7
+    # M_STATE_DIM = 6
     H = spec.H
     dt = params.simulation.dt
 
@@ -115,9 +115,9 @@ def gen_util_funs(
             window[index],
         )
 
-    # Dynamics state: [x, y, phi1, phi2, vx, vy, mu, delta, a] + ctrl [delta, a] + caching [track_pos]
+    # Dynamics state: [x, y, phi1, phi2, vx, vy, phi1dot, phi2dot] + ctrl [delta, a] + caching [track_pos]
     # Needs to keep for u history
-    # In model state: [sin(hitch), cos(hitch), vx, vy, mu, delta, a], mu is only for prior tanh
+    # In model state: [sin(hitch), cos(hitch), vx, vy, phi1dot, phi2dot, delta, a]
     # pred [ax, ay, phi1dot, phi2dot]
     def dynamics(x, u):  # passed as windows
         x_windows = x.reshape(H, D_STATE_DIM + D_U_DIM + D_EXTRA_DIM)
@@ -125,30 +125,30 @@ def gen_util_funs(
         # x_windows = x_windows.at[-1, -3:-1].set(u)
         # x_windows[-1][-3], x_windows[-1][-2] = u[0], u[1]  # Control
 
-        def slice_kin(window):
-            hitch = window[2] - window[3]
+        # def slice_kin(window):
+        #     hitch = window[2] - window[3]
 
-            return jnp.stack(
-                [
-                    jnp.sin(hitch),  # sh
-                    jnp.cos(hitch),  # ch
-                    window[4],  # vx
-                    window[5],  # vy
-                    window[6],  # mu
-                    window[7],  # delta
-                    window[8],  # a
-                ]
-            )
+        #     return jnp.stack(
+        #         [
+        #             jnp.sin(hitch),  # sh
+        #             jnp.cos(hitch),  # ch
+        #             window[4],  # vx
+        #             window[5],  # vy
+        #             window[6],  # mu
+        #             window[7],  # delta
+        #             window[8],  # a
+        #         ]
+        #     )
 
         def slice_mod_raw(window):
             def row(w):
                 hitch = w[2] - w[3]
-                return jnp.stack([jnp.sin(hitch), jnp.cos(hitch), w[4], w[5], w[7], w[8]])
+                return jnp.stack([jnp.sin(hitch), jnp.cos(hitch), w[4], w[5], w[6], w[7], w[8], w[9]])
 
             rows = jax.vmap(row)(window)
             return (rows.reshape(-1) - x_mean) / x_std
 
-        kin_in = slice_kin(x_windows[-1]).flatten()
+        # kin_in = slice_kin(x_windows[-1]).flatten()
 
         x_windows = x_windows.at[:, -3:-1].set(
             jnp.concatenate([x_windows[1:, -3:-1], u[None, :]], axis=0)
@@ -156,14 +156,25 @@ def gen_util_funs(
 
         model_in = slice_mod_raw(x_windows).flatten()[None, ...]
 
-        xpos, ypos, phi1, phi2, vx, vy, *_ = x_windows[-1]
+        xpos, ypos, phi1, phi2, vx, vy, phi1dot, phi2dot, *_ = x_windows[-1]
         arc_len = x_windows[-1][-1]
-        pred = kin_fn(kin_in)
-        pred += model(model_in)[0] * y_std + y_mean
+        # pred = kin_fn(kin_in)
+        pred = model(model_in)[0] * y_std + y_mean
 
-        ax, ay, phi1dot, phi2dot = pred
-        xdot = vx * jnp.cos(phi1) - vy * jnp.sin(phi1)
-        ydot = vx * jnp.sin(phi1) + vy * jnp.cos(phi1)
+        ax, ay, phi1ddot, phi2ddot = pred
+
+        next_vx = vx + ax * dt
+        next_vy = vy + ay * dt
+        next_phi1dot = phi1dot + phi1ddot * dt
+        next_phi2dot = phi2dot + phi2ddot * dt
+
+        avg_vx = 0.5 * (vx + next_vx)
+        avg_vy = 0.5 * (vy + next_vy)
+        # avg_phi_1_dot = 0.5 * (phi1dot + next_phi1dot)
+        # avg_phi_2_dot = 0.5 * (phi2dot + next_phi2dot)
+
+        xdot = avg_vx * jnp.cos(phi1) - avg_vy * jnp.sin(phi1)
+        ydot = avg_vx * jnp.sin(phi1) + avg_vy * jnp.cos(phi1)
 
         index = jnp.searchsorted(track._cumulative, arc_len, side="right") - 1
 
@@ -177,7 +188,7 @@ def gen_util_funs(
 
         du = (u - old_u) / step  # Goofy
 
-        dx = jnp.array([xdot, ydot, phi1dot, phi2dot, ax, ay, 0, du[0], du[1], track_vel])
+        dx = jnp.array([xdot, ydot, next_phi1dot, next_phi2dot, ax, ay, phi1ddot, phi2ddot, du[0], du[1], track_vel])
         # dx_history = (x_windows[1:] - x_windows[:-1]) / dt
         # dx_window = jnp.concatenate([dx_history, dx[None, :]], axis=0)
         # return dx_window.flatten()
