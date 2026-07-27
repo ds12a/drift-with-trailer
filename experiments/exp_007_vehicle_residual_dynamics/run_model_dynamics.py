@@ -27,10 +27,11 @@ from src.simulation.config.trailer_bicycle_config import (
     TrackConfig,
     SimulationConfig,
 )
+from gymnasium.wrappers import RecordVideo
 import json
 
 # Reverse/fwd configs should be automated
-V_TARGET = 60 / 3.6
+V_TARGET = -60 / 3.6
 
 spec = RAW_FS
 kin_fn = kin_zeros
@@ -45,7 +46,7 @@ JSON_PTH = f"./experiments/exp_007_vehicle_residual_dynamics/{NPZ_SAVE_HEAD}_sta
 with open(Path(JSON_PTH), "r") as f:
     norm_stats = json.load(f)
 
-# scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
+scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
 model = TrailerModel(32, 4)
 _, state = nnx.split(model)
@@ -155,11 +156,14 @@ mpc = MPPI_Jax_Debug(
     history=HISTORY,
 )
 
+fname = "rl-video" # if record_file_name is None else record_file_name
+env = RecordVideo(env, video_folder="gym_videos", episode_trigger=lambda x: True, disable_logger=True, name_prefix=fname)
+
 env.reset()
 observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
 
 history = jnp.zeros(HISTORY * (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM))
-
+speeds, slip_angles_f, slip_angles_r, yaw_rates = [], [], [], []
 i = 0
 try:
     cv2.namedWindow("sim", cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
@@ -175,7 +179,7 @@ try:
             [jnp.array([*astuple(state)[:8]]), jnp.array([u[0], u[1]]), jnp.array([arclen])]
         )
         history = jnp.concatenate([history[11:], curr])
-    while True:
+    for i in range(2000):
         start = time.perf_counter()
         u, xhist, vhist = mpc.run_mpc(history)
         u.block_until_ready()
@@ -199,6 +203,21 @@ try:
             xhist[..., -(D_STATE_DIM + D_U_DIM + D_EXTRA_DIM) :], n_viz
         )
 
+        speeds.append(jnp.hypot(state.vx, state.vy))
+        yaw_rates.append(state.yaw_truck_rate)
+
+        vx_safe = jnp.maximum(jnp.abs(state.vx), 0.5)
+        steer_angle = state.steer * env.unwrapped.scenario.vehicle.max_steer_rad
+        alpha_f = steer_angle - jnp.arctan2(
+            state.vy + env.unwrapped.scenario.vehicle.lf * state.yaw_truck_rate, vx_safe
+        )
+        alpha_r = -jnp.arctan2(
+            state.vy - env.unwrapped.scenario.vehicle.lr * state.yaw_truck_rate, vx_safe
+        )
+
+        slip_angles_f.append(alpha_f)
+        slip_angles_r.append(alpha_r)
+
         if i % 2 == 0:
             frame = env.render()
             cv2.imshow("sim", frame[..., ::-1])
@@ -206,6 +225,14 @@ try:
 
         if terminated:
             break
-
+    cutoff = 100
+    print(
+    f"Iters: {i}, "
+    f"Reverse: {V_TARGET > 0}, "
+    f"Avg speed: {jnp.mean(jnp.array(speeds[cutoff:])) * 3.6}, "
+    f"Avg alpha_f: {jnp.mean(jnp.array(slip_angles_f[cutoff:]))}, "
+    f"Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, "
+    f"Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
+    )
 finally:
     env.close()
