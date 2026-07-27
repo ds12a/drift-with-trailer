@@ -25,6 +25,11 @@ from src.simulation.config.trailer_bicycle_config import (
 )
 from src.utils.track import TrackModel
 
+D_STATE_DIM = 7
+D_U_DIM = 2
+D_EXTRA_DIM = 1
+K_STATE_DIM = 7
+M_STATE_DIM = 6
 # spec = KIN_FS
 # kin_fn = kin_zeros
 
@@ -43,11 +48,6 @@ def gen_util_funs(
     a_weight=1e5,
 ):
 
-    D_STATE_DIM = 7
-    D_U_DIM = 2
-    D_EXTRA_DIM = 1
-    K_STATE_DIM = 7
-    M_STATE_DIM = 6
     H = spec.H
     dt = params.simulation.dt
 

@@ -5,10 +5,17 @@ import optax
 from pathlib import Path
 from flax import nnx
 from src.learning.datasets.trailer_data import DataStore, DataLoader, DataLoaderBlocked
-from src.learning.models.trailer_spec import KIN_FS
-from src.learning.models.trailer_spec_nores import RAW_FS, IN_COLS
+    
 from src.learning.models.trailer_nn import TrailerModel
 import wandb
+
+
+RES = True
+
+if RES:
+    from src.learning.models.trailer_spec import KIN_FS as SPEC, IN_COLS
+else:
+    from src.learning.models.trailer_spec_nores import RAW_FS as SPEC, IN_COLS
 
 # import pickle
 import orbax.checkpoint as ocp
@@ -203,7 +210,7 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
-    spec = RAW_FS   
+    spec = SPEC   
 
     raw = DataStore.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_raw_aug.npz"))
     data = raw.build(spec, DataLoaderBlocked, w=40, s=40)

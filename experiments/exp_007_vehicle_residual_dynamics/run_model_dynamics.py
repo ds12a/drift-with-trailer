@@ -13,11 +13,19 @@ from src.simulation.trailer_bicycle_env import TrailerBicycleEnv, VehicleState
 from src.controllers.mpc.mppi_jax import MPPI_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
 from src.learning.models.trailer_nn import TrailerModel
+
 # from src.learning.models.trailer_spec import KIN_FS, kin
 from src.learning.models.trailer_spec_nores import RAW_FS, kin_zeros
 from src.learning.datasets.trailer_data import DataLoader
+
 # from src.dynamics.trailer.trailer_bicycle_kinematic import gen_util_funs, TrackProjection
-from src.dynamics.trailer.model_acceleration_dynamics import gen_util_funs as res_util
+from src.dynamics.trailer.model_acceleration_dynamics import (
+    gen_util_funs as res_util,
+    D_STATE_DIM,
+    D_U_DIM,
+    D_EXTRA_DIM,
+)
+
 from src.dynamics.trailer.trailer_bicycle_kinematic import gen_util_funs as kin_util
 from src.simulation.config.trailer_bicycle_config import (
     TrailerBicycleEnvConfig,
@@ -32,12 +40,6 @@ kin_fn = kin_zeros
 
 HISTORY = spec.H
 
-# below are currently in dyn function, make sure no desync
-D_STATE_DIM = 8
-D_U_DIM = 2
-D_EXTRA_DIM = 1
-# K_STATE_DIM = 7
-# M_STATE_DIM = 6
 
 scenario = TrailerBicycleEnvConfig(
     ".", TrackConfig(mu=1.0, width=10), VehicleConfig(), SimulationConfig()
@@ -45,16 +47,25 @@ scenario = TrailerBicycleEnvConfig(
 # scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
 
-loader = DataLoader.load(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc1.npz"), spec)
+loader = DataLoader.load(
+    Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc2.npz"), spec
+)
 x_mean, x_std = jnp.asarray(loader.x_mean), jnp.asarray(loader.x_std)
 y_mean, y_std = jnp.asarray(loader.y_mean), jnp.asarray(loader.y_std)
 
-print (x_mean, x_std, y_mean, y_std)
+print(x_mean, x_std, y_mean, y_std)
 
 model = TrailerModel(32, 4)
 _, state = nnx.split(model)
 ckpt = ocp.StandardCheckpointer()
-nnx.update(model, ckpt.restore(Path.cwd() / "src/learning/models/trained/trailer-h4-128-4l-pruned-accel-augsplit2_best", state))
+nnx.update(
+    model,
+    ckpt.restore(
+        Path.cwd() / "src/learning/models/trained/trailer-h4-128-4l-pruned-accel-augsplit2_best",
+        state,
+    ),
+)
+
 
 def build_planner_debug(all_samples, n_vis):
     if all_samples is None:
@@ -66,7 +77,8 @@ def build_planner_debug(all_samples, n_vis):
     cand = np.asarray(all_samples[idx, :, :2])  # (n, T, 2), small transfer
     return {"candidate_xy": cand}
 
-v_target = -60 / 3.6
+
+v_target = 60 / 3.6
 
 dynamics, cost, bound, _ = res_util(
     scenario,
@@ -104,7 +116,7 @@ mpc = MPPI_Jax_Debug(
     step=0.05,
     T=45,
     alpha=0.05,
-    history=HISTORY
+    history=HISTORY,
 )
 
 env.reset()
@@ -115,7 +127,7 @@ history = jnp.zeros(HISTORY * (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM))
 i = 0
 try:
     # Necessary, the model panics when seeing 0/default windoww
-    for _ in range(HISTORY+1):
+    for _ in range(HISTORY + 1):
 
         # # Kin
         # dynamics_kin, cost_kin, bound_kin, _ = kin_util(
@@ -162,8 +174,9 @@ try:
 
         state = env.unwrapped._state
         arclen = env.unwrapped.track._arc_samples[env.unwrapped._last_index]
-        curr = jnp.concatenate([jnp.array([*astuple(state)[:8]]),
-                                jnp.array([u[0], u[1]]), jnp.array([arclen])])
+        curr = jnp.concatenate(
+            [jnp.array([*astuple(state)[:8]]), jnp.array([u[0], u[1]]), jnp.array([arclen])]
+        )
         history = jnp.concatenate([history[11:], curr])
     while True:
         start = time.perf_counter()
@@ -175,17 +188,19 @@ try:
 
         state: VehicleState = env.unwrapped._state
         arclen = env.unwrapped.track._arc_samples[env.unwrapped._last_index]
-        curr = jnp.concatenate([jnp.array([*astuple(state)[:8]]),
-                                jnp.array([u[0], u[1]]),
-                                jnp.array([arclen])])
-        history = jnp.concatenate([history[(D_STATE_DIM + D_U_DIM + D_EXTRA_DIM):], curr])
+        curr = jnp.concatenate(
+            [jnp.array([*astuple(state)[:8]]), jnp.array([u[0], u[1]]), jnp.array([arclen])]
+        )
+        history = jnp.concatenate([history[(D_STATE_DIM + D_U_DIM + D_EXTRA_DIM) :], curr])
         i += 1
 
         print(i, elapsed, action)
 
         n_viz = 50
         # print(xhist.shape)
-        env.unwrapped.planner_debug = build_planner_debug(xhist[..., -(D_STATE_DIM + D_U_DIM + D_EXTRA_DIM):], n_viz)
+        env.unwrapped.planner_debug = build_planner_debug(
+            xhist[..., -(D_STATE_DIM + D_U_DIM + D_EXTRA_DIM) :], n_viz
+        )
 
         if i % 2 == 0:
             frame = env.render()
@@ -195,6 +210,6 @@ try:
         if terminated:
             break
 
-        
+
 finally:
     env.close()

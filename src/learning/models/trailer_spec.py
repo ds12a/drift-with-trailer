@@ -13,7 +13,7 @@ Kinematics gives [ax, 0, phi1dot, phi2dot]
 
 
 V = VehicleConfig()
-IN_COLS = jnp.array([0, 1, 2, 3, 7, 8])  # sh, ch, vx, vy, delta, accel
+IN_COLS = jnp.array([0, 1, 2, 3, 4, 5, 7, 8])  # sh, ch, vx, vy, phi1dot, phi2dot, delta, accel
 KIN_COLS = jnp.array([0, 1, 2, 3, 6, 7, 8])  # mu for kin prior
 VEL_COLS = jnp.array([2, 3])  # vx, vy -> FD -> ax, ay
 YAW_COLS = jnp.array([4, 5])  # w1, w2
