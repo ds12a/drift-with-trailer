@@ -13,19 +13,13 @@ from src.simulation.trailer_bicycle_env import TrailerBicycleEnv, VehicleState
 from src.controllers.mpc.mppi_jax import MPPI_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
 from src.learning.models.trailer_nn import TrailerModel
-
-# from src.learning.models.trailer_spec import KIN_FS, kin
 from src.learning.models.trailer_spec_nores import RAW_FS, kin_zeros
-from src.learning.datasets.trailer_data import DataLoader
-
-# from src.dynamics.trailer.trailer_bicycle_kinematic import gen_util_funs, TrackProjection
 from src.dynamics.trailer.model_acceleration_dynamics import (
     gen_util_funs as res_util,
     D_STATE_DIM,
     D_U_DIM,
     D_EXTRA_DIM,
 )
-
 from src.dynamics.trailer.trailer_bicycle_kinematic import gen_util_funs as kin_util
 from src.simulation.config.trailer_bicycle_config import (
     TrailerBicycleEnvConfig,
@@ -33,27 +27,26 @@ from src.simulation.config.trailer_bicycle_config import (
     TrackConfig,
     SimulationConfig,
 )
-from src.utils.track import TrackModel
+from gymnasium.wrappers import RecordVideo
+import json
+
+# Reverse/fwd configs should be automated
+V_TARGET = -60 / 3.6
 
 spec = RAW_FS
 kin_fn = kin_zeros
-
 HISTORY = spec.H
-
-
 scenario = TrailerBicycleEnvConfig(
     ".", TrackConfig(mu=1.0, width=10), VehicleConfig(), SimulationConfig()
 )
-# scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
+NPZ_SAVE_HEAD = "data_proc2"
+JSON_PTH = f"./experiments/exp_007_vehicle_residual_dynamics/{NPZ_SAVE_HEAD}_stats.json"
 
-loader = DataLoader.load(
-    Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc2.npz"), spec
-)
-x_mean, x_std = jnp.asarray(loader.x_mean), jnp.asarray(loader.x_std)
-y_mean, y_std = jnp.asarray(loader.y_mean), jnp.asarray(loader.y_std)
+with open(Path(JSON_PTH), "r") as f:
+    norm_stats = json.load(f)
 
-print(x_mean, x_std, y_mean, y_std)
+scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
 model = TrailerModel(32, 4)
 _, state = nnx.split(model)
@@ -77,24 +70,6 @@ def build_planner_debug(all_samples, n_vis):
     cand = np.asarray(all_samples[idx, :, :2])  # (n, T, 2), small transfer
     return {"candidate_xy": cand}
 
-
-v_target = 60 / 3.6
-
-dynamics, cost, bound, _ = res_util(
-    scenario,
-    spec,
-    kin_fn,
-    model,
-    loader,
-    reverse=False,
-    v_target=v_target,
-    p_weight=1e2,
-    p_slow_weight=1e0,
-    # s_weight=2e1,
-    c_weight=1e-2,
-    a_weight=1e2,
-)
-
 env = TrailerBicycleEnv(
     renderer="pybullet",
     render_mode="rgb_array_birds_eye",
@@ -102,6 +77,68 @@ env = TrailerBicycleEnv(
     render_height=300,
     scenario=scenario,
 )
+
+if V_TARGET > 0:
+    dynamics, cost, bound, _ = res_util(
+        scenario,
+        spec,
+        kin_fn,
+        model,
+        norm_stats,
+        reverse=False,
+        v_target=V_TARGET,
+        p_weight=1e2,
+        p_slow_weight=1e0,
+        c_weight=1e0,
+        a_weight=7e2,
+    )
+    mpc = MPPI_Jax_Debug(
+        (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM),
+        2,
+        dynamics,
+        None,
+        cost,
+        bound,
+        jnp.diag(jnp.array([3e-3, 0.2])),
+        inverse_temp=0.5,
+        K=500,
+        step=0.05,
+        T=80,
+        alpha=0.05,
+        history=HISTORY,
+    )
+
+else:
+    dynamics, cost, bound, _ = res_util(
+        scenario,
+        spec,
+        kin_fn,
+        model,
+        norm_stats,
+        reverse=False,
+        v_target=V_TARGET,
+        p_weight=1e2,
+        p_slow_weight=1e0,
+        # s_weight=2e1,
+        c_weight=1e-2,
+        a_weight=1e2,
+    )
+    mpc = MPPI_Jax_Debug(
+        (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM),
+        2,
+        dynamics,
+        None,
+        cost,
+        bound,
+        jnp.diag(jnp.array([3e-3, 0.2])),
+        inverse_temp=0.5,
+        K=500,
+        step=0.05,
+        T=55,
+        alpha=0.05,
+        history=HISTORY,
+    )
+
 
 mpc = MPPI_Jax_Debug(
     (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM),
@@ -119,55 +156,19 @@ mpc = MPPI_Jax_Debug(
     history=HISTORY,
 )
 
+fname = "rl-video" # if record_file_name is None else record_file_name
+env = RecordVideo(env, video_folder="gym_videos", episode_trigger=lambda x: True, disable_logger=True, name_prefix=fname)
+
 env.reset()
 observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
 
 history = jnp.zeros(HISTORY * (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM))
-
+speeds, slip_angles_f, slip_angles_r, yaw_rates = [], [], [], []
 i = 0
 try:
+    cv2.namedWindow("sim", cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
     # Necessary, the model panics when seeing 0/default windoww
     for _ in range(HISTORY + 1):
-
-        # # Kin
-        # dynamics_kin, cost_kin, bound_kin, _ = kin_util(
-        #     scenario,
-        #     reverse=False,
-        #     v_target=v_target,
-        #     p_weight=1e2,
-        #     p_slow_weight=1e0,
-        #     # s_weight=2e1,
-        #     c_weight=2e2,
-        #     a_weight=1e2,
-        # )
-        # mpc_kin = MPPI_Jax(
-        #     7,
-        #     2,
-        #     dynamics_kin,
-        #     None,
-        #     cost_kin,
-        #     bound_kin,
-        #     jnp.diag(jnp.array([3e-3, 0.2])),
-        #     inverse_temp=1,
-        #     K=500,
-        #     step=0.05,
-        #     T=50,
-        #     alpha=0.05,
-        # )
-        # state_kin: VehicleState = env.unwrapped._state
-        # mpc_state = jnp.array(
-        #     [
-        #         state_kin.x,
-        #         state_kin.y,
-        #         state_kin.yaw_truck,
-        #         state_kin.yaw_trailer,
-        #         state_kin.vx,
-        #         env.unwrapped.track.find_mu(state_kin.x, state_kin.y),
-        #         env.unwrapped.track._arc_samples[env.unwrapped._last_index],
-        #     ]
-        # )
-        # u = mpc_kin.run_mpc(mpc_state)
-        # u.block_until_ready()
         u = jnp.array([0.0, -0.01])
         action = np.array(u)
         observation, reward, terminated, truncated, info = env.step(action)
@@ -178,7 +179,7 @@ try:
             [jnp.array([*astuple(state)[:8]]), jnp.array([u[0], u[1]]), jnp.array([arclen])]
         )
         history = jnp.concatenate([history[11:], curr])
-    while True:
+    for i in range(2000):
         start = time.perf_counter()
         u, xhist, vhist = mpc.run_mpc(history)
         u.block_until_ready()
@@ -202,6 +203,21 @@ try:
             xhist[..., -(D_STATE_DIM + D_U_DIM + D_EXTRA_DIM) :], n_viz
         )
 
+        speeds.append(jnp.hypot(state.vx, state.vy))
+        yaw_rates.append(state.yaw_truck_rate)
+
+        vx_safe = jnp.maximum(jnp.abs(state.vx), 0.5)
+        steer_angle = state.steer * env.unwrapped.scenario.vehicle.max_steer_rad
+        alpha_f = steer_angle - jnp.arctan2(
+            state.vy + env.unwrapped.scenario.vehicle.lf * state.yaw_truck_rate, vx_safe
+        )
+        alpha_r = -jnp.arctan2(
+            state.vy - env.unwrapped.scenario.vehicle.lr * state.yaw_truck_rate, vx_safe
+        )
+
+        slip_angles_f.append(alpha_f)
+        slip_angles_r.append(alpha_r)
+
         if i % 2 == 0:
             frame = env.render()
             cv2.imshow("sim", frame[..., ::-1])
@@ -209,7 +225,14 @@ try:
 
         if terminated:
             break
-
-
+    cutoff = 100
+    print(
+    f"Iters: {i}, "
+    f"Reverse: {V_TARGET > 0}, "
+    f"Avg speed: {jnp.mean(jnp.array(speeds[cutoff:])) * 3.6}, "
+    f"Avg alpha_f: {jnp.mean(jnp.array(slip_angles_f[cutoff:]))}, "
+    f"Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, "
+    f"Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
+    )
 finally:
     env.close()
