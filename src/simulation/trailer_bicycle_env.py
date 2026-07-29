@@ -251,8 +251,8 @@ class DynamicTrailerBicycleModel:
 
         next_x = x + xdot * dt
         next_y = y + ydot * dt
-        next_phi_1 = phi_1 + avg_phi_1_dot * dt
-        next_phi_2 = phi_2 + avg_phi_2_dot * dt
+        next_phi_1 = phi_1 + next_phi_1_dot * dt
+        next_phi_2 = phi_2 + next_phi_2_dot * dt
 
         return VehicleState(
             next_x,
@@ -280,8 +280,8 @@ class TrailerBicycleEnv(gym.Env):
         render_mode: str | None = None,
         render_width: int = 1280,
         render_height: int = 720,
-        scenario = None,
-        v_init = 6.0,
+        scenario=None,
+        v_init=6.0,
     ) -> None:
         super().__init__()
         self.v_init = v_init
@@ -469,7 +469,6 @@ class TrailerBicycleEnv(gym.Env):
             >= self.scenario.vehicle.max_hitch
         )
 
-      
         return self._observation(), 0, terminated, False, info
 
     def render(self):

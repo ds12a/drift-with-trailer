@@ -28,6 +28,7 @@ from src.utils.track import TrackModel
 D_STATE_DIM = 8
 D_U_DIM = 2
 D_EXTRA_DIM = 1
+M_OUT_DIM = 4
 # K_STATE_DIM = 7
 # M_STATE_DIM = 6
 # spec = KIN_FS
@@ -51,7 +52,6 @@ def gen_util_funs(
     H = spec.H
     dt = params.simulation.dt
 
-    M_OUT_DIM = 4
 
     reverse = 1 if reverse else -1
     step = params.simulation.dt

@@ -52,27 +52,25 @@ def rollout(
 
     def step_dynamics(carry, control):
         x, S, i = carry
-
-        if history is not None:
-            x_dim = (x.shape[0] + u.shape[0]) / history
-            historical_x = x[:-x.shape[0]]
-            x = x[-x.shape[0]:]
-
         u, v, bounded_noise = control
 
-        new_x = x + dynamics(x, v) * step
+        if history is not None:
+            step_dim = x.shape[0] // history
+            curr_x = x[-step_dim:]
+            dx = dynamics(x, v)
+            new_curr_x = curr_x + dx * step
+            new_x = jnp.concatenate([x[step_dim:], new_curr_x])
+        else:
+            new_x = x + dynamics(x, v) * step
+
         new_S = S + cost(new_x, v, i) + gamma * jnp.einsum("n,nm,m->", u, inv_cv, bounded_noise)
         new_i = i + 1
 
-        new_carry = (
-            jnp.concatenate([historical_x[:x_dim], new_x]) if history is not None else new_x,
-            new_S,
-            new_i,
-        )
+        new_carry = (new_x, new_S, new_i)
 
         return new_carry, (new_x, new_S, v)
 
-    (x, S, _), (xhist, _) = jax.lax.scan(step_dynamics, (x, 0, 0), (u, new_a, bounded_noise))
+    (x, S, _), (xhist, _, vhist) = jax.lax.scan(step_dynamics, (x, 0, 0), (u, new_a, bounded_noise))
 
     if term_cost:
         S += term_cost(x, u[-1])
@@ -81,7 +79,7 @@ def rollout(
 
     S += jnp.einsum("tn,nm,tm->", diff, omega, diff)
 
-    return S, xhist
+    return S, xhist, vhist
 
 
 @functools.partial(
@@ -108,7 +106,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
     key, subkey = jax.random.split(key)
     noise = jax.random.normal(subkey, u_batch.shape) * jnp.sqrt(jnp.diag(cv))
 
-    costs, bounded_noise, xhist = forward_sim(x_batch, u_batch, a, noise)
+    costs, bounded_noise, xhist, vhist = forward_sim(x_batch, u_batch, a, noise)
 
     weights = jnp.exp(-(costs - costs.min()) / inverse_temp)
     weights = weights / weights.sum()
@@ -118,7 +116,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
 
     a = a + u
 
-    return u, key, a, xhist
+    return u, key, a, xhist, vhist
 
 
 class SMPPI_Jax_Debug:
@@ -211,7 +209,7 @@ class SMPPI_Jax_Debug:
         new_a = self.bound_control(new_a)
         noise = new_a - a - u
 
-        S, xhist = rollout(
+        S, xhist, vhist = rollout(
             x,
             u,
             a,
@@ -224,10 +222,10 @@ class SMPPI_Jax_Debug:
             self.bound_control,
             self.dynamics,
             self.step,
-            self.history
+            self.history,
         )
 
-        return S, noise, xhist
+        return S, noise, xhist, vhist
 
     def run_mpc(self, x: ArrayLike):  # -> torch.Tensor:
         """

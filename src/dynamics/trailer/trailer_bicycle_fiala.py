@@ -225,9 +225,7 @@ def gen_util_funs(
         # Trapezoidal (avg) approximations
         avg_vx = 0.5 * (v_1x + next_vx)
         avg_vy = 0.5 * (v_1y + next_vy)
-        avg_phi_1_dot = 0.5 * (phi_1_dot + next_phi_1_dot)
-        avg_phi_2_dot = 0.5 * (phi_2_dot + next_phi_2_dot)
-
+    
         # Change of frame
         xdot = avg_vx * jnp.cos(phi_1) - avg_vy * jnp.sin(phi_1)
         ydot = avg_vx * jnp.sin(phi_1) + avg_vy * jnp.cos(phi_1)

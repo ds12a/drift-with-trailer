@@ -48,23 +48,23 @@ def rollout(
     bounded_noise = v - u
 
     def step_dynamics(carry, control):
-            x, S, i = carry
-            u, v, bounded_noise = control
+        x, S, i = carry
+        u, v, bounded_noise = control
 
-            if history is not None:
-                step_dim = x.shape[0] // history
-                curr_x = x[-step_dim:]
-                dx = dynamics(x, v)
-                new_curr_x = curr_x + dx * step
-                new_x = jnp.concatenate([x[step_dim:], new_curr_x])
-            else:
-                new_x = x + dynamics(x, v) * step
+        if history is not None:
+            step_dim = x.shape[0] // history
+            curr_x = x[-step_dim:]
+            dx = dynamics(x, v)
+            new_curr_x = curr_x + dx * step
+            new_x = jnp.concatenate([x[step_dim:], new_curr_x])
+        else:
+            new_x = x + dynamics(x, v) * step
 
-            new_S = S + cost(new_x, v, i) + gamma * jnp.einsum("n,nm,m->", u, inv_cv, bounded_noise)
-            new_i = i + 1
-            # jax.debug.print("x: {}", x[-step_dim:])
+        new_S = S + cost(new_x, v, i) + gamma * jnp.einsum("n,nm,m->", u, inv_cv, bounded_noise)
+        new_i = i + 1
+        # jax.debug.print("x: {}", x[-step_dim:])
 
-            return (new_x, new_S, new_i), (new_x, new_S, v)
+        return (new_x, new_S, new_i), (new_x, new_S, v)
 
     (x, S, _), (xhist, _, vhist) = jax.lax.scan(step_dynamics, (x, 0, 0), (u, v, bounded_noise))
 

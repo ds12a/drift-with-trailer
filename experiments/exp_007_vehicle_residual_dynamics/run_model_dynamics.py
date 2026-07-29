@@ -70,6 +70,7 @@ def build_planner_debug(all_samples, n_vis):
     cand = np.asarray(all_samples[idx, :, :2])  # (n, T, 2), small transfer
     return {"candidate_xy": cand}
 
+
 env = TrailerBicycleEnv(
     renderer="pybullet",
     render_mode="rgb_array_birds_eye",
@@ -140,24 +141,14 @@ else:
     )
 
 
-mpc = MPPI_Jax_Debug(
-    (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM),
-    2,
-    dynamics,
-    None,
-    cost,
-    bound,
-    jnp.diag(jnp.array([3e-3, 0.2])),
-    inverse_temp=0.5,
-    K=500,
-    step=0.05,
-    T=45,
-    alpha=0.05,
-    history=HISTORY,
+fname = "rl-video"  # if record_file_name is None else record_file_name
+env = RecordVideo(
+    env,
+    video_folder="gym_videos",
+    episode_trigger=lambda x: True,
+    disable_logger=True,
+    name_prefix=fname,
 )
-
-fname = "rl-video" # if record_file_name is None else record_file_name
-env = RecordVideo(env, video_folder="gym_videos", episode_trigger=lambda x: True, disable_logger=True, name_prefix=fname)
 
 env.reset()
 observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
@@ -227,12 +218,12 @@ try:
             break
     cutoff = 100
     print(
-    f"Iters: {i}, "
-    f"Reverse: {V_TARGET > 0}, "
-    f"Avg speed: {jnp.mean(jnp.array(speeds[cutoff:])) * 3.6}, "
-    f"Avg alpha_f: {jnp.mean(jnp.array(slip_angles_f[cutoff:]))}, "
-    f"Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, "
-    f"Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
+        f"Iters: {i}, "
+        f"Reverse: {V_TARGET > 0}, "
+        f"Avg speed: {jnp.mean(jnp.array(speeds[cutoff:])) * 3.6}, "
+        f"Avg alpha_f: {jnp.mean(jnp.array(slip_angles_f[cutoff:]))}, "
+        f"Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, "
+        f"Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
     )
 finally:
     env.close()
