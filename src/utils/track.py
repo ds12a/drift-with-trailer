@@ -53,7 +53,7 @@ class TrackModel:
         self.width = float(width)
         self.closed = bool(closed)
 
-        self.friction_map = jnp.asarray(friction_map)
+        self.friction_map = None if friction_map is None else jnp.asarray(friction_map)
         self.mu = mu
 
         extended = np.vstack([self.centerline, self.centerline[0]])

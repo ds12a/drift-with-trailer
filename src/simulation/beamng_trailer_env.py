@@ -8,18 +8,20 @@ from src.simulation.config.trailer_bicycle_config import (
     TrailerBicycleEnvConfig,
 )
 from src.utils.track import TrackModel, TrackProjection
+from src.simulation.config.trailer_beamng_config import BeamNGTrailerEnvConfig
 import gymnasium as gym
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from beamngpy import BeamNGpy, Scenario, Vehicle
+from beamngpy import BeamNGpy, Scenario, Vehicle, Road
+from beamngpy.sensors import AdvancedIMU, Electrics
 from pathlib import Path
 
 
 from src.simulation.rendering import PyBulletMirrorRenderer
 
 
-from dataclasses import dataclass, astuple
+from dataclasses import asdict, dataclass, astuple
 
 
 def wrap_angle(angle: float) -> float:
@@ -40,8 +42,7 @@ class VehicleState:
     accel: float
 
 
-
-class BeamngTrailerEnv(gym.Env):
+class BeamNGTrailerEnv(gym.Env):
     metadata = {
         "render_modes": ["human", "rgb_array_follow", "rgb_array_birds_eye"],
         "render_fps": 20,
@@ -49,34 +50,34 @@ class BeamngTrailerEnv(gym.Env):
 
     def __init__(
         self,
-        beamng_home_dir = None,
-        beamng_user_dir = None,
-        renderer: str | None = None,
-        v_init = 6.0,
+        config: BeamNGTrailerEnvConfig=None,
+        beamng_home_dir=None,
+        beamng_user_dir=None,
+        headless=False,
     ) -> None:
 
+        if config is None:
+            config = BeamNGTrailerEnvConfig()
+
         super().__init__()
-        self.v_init = v_init
-        
-        csv = "src/simulation/assets/tracks/ks_barcelona_layout_gp_centerline.csv"
-        width = 10
 
-        frame = pd.read_csv(Path(csv))
-        if {"x", "y"}.issubset(frame.columns):
-            centerline = frame[["x", "y"]].to_numpy(dtype=float)
-        else:
-            centerline = frame.iloc[:, :2].to_numpy(dtype=float)
+        self.config = config
 
-        print(centerline.shape)
+        if beamng_home_dir is None:
+            beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
+        if beamng_user_dir is None:
+            beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech/current"
+
+        self.track = TrackModel.from_config(config.track)
         centerline = np.hstack(
             [
-                centerline,
-                np.zeros((centerline.shape[0], 1)),
-                np.ones((centerline.shape[0], 1)) * width,
+                self.track.centerline,
+                np.zeros((self.track.centerline.shape[0], 1)),
+                np.ones((self.track.centerline.shape[0], 1)) * self.track.width,
             ]
         )
 
-
+        # Process to make it lighter on BeamNG engine
         def decimate_by_arclength(xy, min_spacing=5.0):
             keep = [0]
             for i in range(1, len(xy)):
@@ -84,26 +85,20 @@ class BeamngTrailerEnv(gym.Env):
                     keep.append(i)
             return np.array(keep)
 
-
         idx = decimate_by_arclength(centerline[:, :2], min_spacing=10.0)
         centerline = centerline[idx]
-        print(centerline.shape)
 
-        if beamng_home_dir is None:
-            beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
-        if beamng_user_dir is None:
-            beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech/current"
-        print(beamng_home_dir)
         bng = BeamNGpy("localhost", 25252, home=beamng_home_dir, user=beamng_user_dir)
         bng.open(launch=True)
         bng.settings.set_deterministic(steps_per_second=50)
+        self.bng = bng  # For convenience
 
         scenario = Scenario("tech_ground", "Barcelona")
-
-        road = Road("track_editor_C_center", rid="test_road", looped=False)
+        self.scenario = scenario
         material = "road_asphalt_2lane"
         CHUNK_SIZE = 30
         roads = []
+        self.roads = roads
         for k, start in enumerate(range(0, len(centerline), CHUNK_SIZE)):
             seg = centerline[start : start + CHUNK_SIZE + 1]
             if len(seg) < 2:
@@ -118,31 +113,37 @@ class BeamngTrailerEnv(gym.Env):
         roads.append(r)
         scenario.add_road(r)
 
-        tractor = Vehicle("car", model="scintilla", part_config="vehicles/scintilla/hitch.pc")
-        dx, dy = -(centerline[1] - centerline[0])[:2]
-        yaw = np.arctan2(dx, dy)
-        yaw_quat = np.array([0.0, 0.0, float(np.sin(yaw * 0.5)), float(np.cos(yaw * 0.5))])
+        tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state()
+        yaw_quat = BeamNGTrailerEnv.yaw_to_quat(yaw)
+        tractor = Vehicle(
+            "car", model="scintilla", part_config="vehicles/scintilla/hitch.pc"
+        )
+        self.tractor = tractor
         scenario.add_vehicle(
             tractor,
-            pos=centerline[0, :3],
+            pos=tractor_xyz,
+            rot_quat=yaw_quat,
+        )
+        trailer = Vehicle("trailer", model="cargotrailer")
+        self.trailer = trailer
+        scenario.add_vehicle(
+            trailer,
+            pos=trailer_xyz,
             rot_quat=yaw_quat,
         )
 
-        trailer = Vehicle("trailer", model="cargotrailer")
-        l = 7.0
-        tangent = np.array([dx, dy, 0]) / np.linalg.norm(np.array([dx, dy, 0]))
-        trailer_pos = centerline[0, :3].reshape(3) + tangent * l
-        print(trailer_pos)
-        scenario.add_vehicle(
-            trailer,
-            pos=trailer_pos,
-            rot_quat=yaw_quat,
-        )
 
         scenario.make(bng)
         bng.scenario.load(scenario)
         bng.scenario.start()
         tractor.couplers.attach()
+        bng.control.pause()
+
+        self.imu1 = AdvancedIMU("imu1", bng, self.tractor)
+        self.imu2 = AdvancedIMU("imu2", bng, self.trailer)
+
+        e = Electrics()
+        tractor.attach_sensor("e1", e)
 
         self._state: VehicleState | None = None
 
@@ -152,48 +153,80 @@ class BeamngTrailerEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
         self.action_space = gym.spaces.Box(
-            low=np.array([-1.0, -1], dtype=np.float32),
+            low=np.array([-1.0, -1.0], dtype=np.float32),
             high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
 
-    def _initial_state(
-        self,
-        initial_progress: float | None = None,
-        initial_lateral_error: float | None = None,
-        initial_heading_error: float | None = None,
-        initial_speed: float | None = None,
-    ) -> VehicleState:
-        if any(
-            value is not None
-            for value in (
-                initial_progress,
-                initial_lateral_error,
-                initial_heading_error,
-                initial_speed,
-            )
-        ):
-            progress = float(initial_progress if initial_progress is not None else 0.0) % 1.0
-            lateral_error = float(
-                initial_lateral_error if initial_lateral_error is not None else 0.0
-            )
-            heading_error = float(
-                initial_heading_error if initial_heading_error is not None else 0.0
-            )
-            speed = float(initial_speed if initial_speed is not None else self.v_init)
-            return self.dynamics.initial_state(
-                self.track,
-                progress=progress,
-                lateral_error=lateral_error,
-                heading_error=heading_error,
-                speed=speed,
-            )
+    @classmethod
+    def yaw_to_quat(cls, yaw):
+        """
+        In BeamNG convention, its really weird
+        """
+        yaw += np.pi / 2
+        return (0.0, 0.0, np.cos(yaw / 2), np.sin(yaw / 2))  # terrible
 
-        return self.dynamics.initial_state(self.track, progress=0.0, speed=self.v_init)
+    def _initial_beamng_state(self):
+        centerline = self.track.centerline
+        tractor_xyz = np.concat([centerline[0], np.array([0.0])], axis=0)
+        dx, dy = (centerline[1] - centerline[0])[:2]
+        tangent = np.array([dx, dy, 0]) / np.linalg.norm(np.array([dx, dy, 0]))
+        l = 7.0
+        trailer_xyz = tractor_xyz + tangent * l
+        yaw = np.arctan2(dy, dx)
+        return tractor_xyz, trailer_xyz, yaw
+
+    def _initial_env_state(self) -> VehicleState:
+        tractor_xyz, _, yaw = self._initial_beamng_state()
+        return VehicleState(
+            *tractor_xyz[:2],
+            yaw,
+            yaw,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+
+    def _poll_state(self) -> VehicleState:
+        self.tractor.poll_sensors()
+        self.trailer.poll_sensors()
+
+        x, y, z = self.tractor.state["pos"]
+        vx, vy, vz = self.tractor.state["vel"]
+        dir1 = np.zeros(2)
+        dir2 = np.zeros(2)
+
+        dir1[0], dir1[1], _ = self.tractor.state["dir"]
+        dir2[0], dir2[1], _ = self.trailer.state["dir"]
+
+        phi1 = np.arctan2(*(dir1[::-1]))
+        phi2 = np.arctan2(*(dir2[::-1]))
+
+        # print(self.imu1.poll())
+        imu1data = self.imu1.poll()
+        if imu1data != []:
+            lastimu1 = max(imu1data.keys())
+            phi1dot = imu1data[lastimu1]["angVelSmooth"][2]
+        else:
+            phi1dot = self._state.yaw_truck_rate
+
+        imu2data = self.imu2.poll()
+        if imu2data != []:
+            lastimu2 = max(imu2data.keys())
+            phi2dot = imu2data[lastimu2]["angVelSmooth"][2]
+        else:
+            phi2dot = self._state.yaw_trailer_rate
+
+        delta = self.tractor.sensors["e1"]["steering"]
+        throt = self.tractor.sensors["e1"]["throttle"]
+
+        return VehicleState(x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, delta, throt)
 
     def _observation(self) -> np.ndarray:
         assert self._state is not None
-
         obs = np.concatenate(
             [
                 np.array(
@@ -201,6 +234,8 @@ class BeamngTrailerEnv(gym.Env):
                         # self._state.progress,
                         # self._state.lateral_error,
                         # self._state.heading_error,
+                        self._state.x,
+                        self._state.y,
                         self._state.vx,
                         self._state.vy,
                         self._state.yaw_truck_rate,
@@ -215,74 +250,46 @@ class BeamngTrailerEnv(gym.Env):
         )
         return obs
 
-    def _render_state(self) -> dict[str, Any]:
-        assert self._state is not None
-        return {
-            "x": self._state.x,
-            "y": self._state.y,
-            "yaw": self._state.yaw_truck,
-            "trailer_yaw": self._state.yaw_trailer,
-            "steering_angle": self._state.steer * self.scenario.vehicle.max_steer_rad,
-            "speed": self._state.vx,
-        }
-
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         super().reset(seed=seed)
-        options = options or {}
-        start_mode = options.get("start_mode", options.get("mode", "grid"))
 
-        self._state = self._initial_state(
-            initial_progress=options.get("initial_progress"),
-            initial_lateral_error=options.get("initial_lateral_error"),
-            initial_heading_error=options.get("initial_heading_error"),
-            initial_speed=options.get("initial_speed"),
-        )
+        self._state = self._initial_env_state()
+        tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state()
+        yaw_quat = BeamNGTrailerEnv.yaw_to_quat(yaw)
+        self.tractor.teleport(pos=tuple(tractor_xyz), rot_quat=yaw_quat)
+        self.trailer.teleport(pos=tuple(trailer_xyz), rot_quat=yaw_quat)
 
         self._previous_feature_state = None
         self._step_count = 0
         self._lap_count = 0
-        self._last_index = None
 
         _, self._last_index = self.track.project(self._state.x, self._state.y, None)
 
+        self.bng.step(10)
+
         obs = self._observation()
         info = {
-            "state": self._render_state(),
-            "render_state": self._render_state(),
-            "reset": {
-                "start_mode": start_mode,
-                "initial_progress": (
-                    None
-                    if options.get("initial_progress") is None
-                    else float(options["initial_progress"])
-                ),
-                "initial_lateral_error": (
-                    None
-                    if options.get("initial_lateral_error") is None
-                    else float(options["initial_lateral_error"])
-                ),
-                "initial_heading_error": (
-                    None
-                    if options.get("initial_heading_error") is None
-                    else float(options["initial_heading_error"])
-                ),
-                "initial_speed": (
-                    None
-                    if options.get("initial_speed") is None
-                    else float(options["initial_speed"])
-                ),
-            },
+            "state": asdict(self._state),
+            "reset": {},
         }
         return obs, info
 
     def step(self, action):
         assert self._state is not None, "Call reset() before step()."
         action = np.asarray(action, dtype=float)
-        proj, self._last_index = self.track.project(self._state.x, self._state.y, self._last_index)
+        proj, self._last_index = self.track.project(
+            self._state.x, self._state.y, self._last_index
+        )
 
         previous_progress = proj.progress
 
-        self._state = self.dynamics.step(self._state, action, self.track)
+        steer, accel = action
+        throttle = max(accel, 0.0)
+        brake = min(accel, 0.0)
+        self.tractor.control(steering=steer, throttle=throttle, brake=brake)
+        self.bng.step(1)
+
+        self._state = self._poll_state() # Note: There is control lag so throttle, brake are independent from MPPI control
 
         self._step_count += 1
         projection, self._last_index = self.track.project(
@@ -291,7 +298,8 @@ class BeamngTrailerEnv(gym.Env):
         if projection.progress < previous_progress - 0.5:
             self._lap_count += 1
 
-        render_state = self._render_state()
+        # render_state = self._render_state()
+        render_state = None
         info = {
             "state": render_state,
             "render_state": render_state,
@@ -304,26 +312,39 @@ class BeamngTrailerEnv(gym.Env):
         terminated = (
             self.track.out_of_bounds(projection.lateral_error)
             or np.abs(wrap_angle(self._state.yaw_trailer - self._state.yaw_truck))
-            >= self.scenario.vehicle.max_hitch
+            >= self.config.vehicle.max_hitch
         )
 
-      
         return self._observation(), 0, terminated, False, info
 
     def render(self):
-        if self.render_mode is None or self.renderer_kind != "pybullet":
-            return None
-        if self.renderer is None:
-            self.renderer = PyBulletMirrorRenderer(
-                self.scenario,
-                self.track,
-                self.render_mode,
-                width=self.render_width,
-                height=self.render_height,
-            )
-        return self.renderer.render(self._render_state(), planner_debug=self.planner_debug)
+        # TODO impl MPPI viz
+        # if self.render_mode is None or self.renderer_kind != "pybullet":
+        #     return None
+        # if self.renderer is None:
+        #     self.renderer = PyBulletMirrorRenderer(
+        #         self.scenario,
+        #         self.track,
+        #         self.render_mode,
+        #         width=self.render_width,
+        #         height=self.render_height,
+        #     )
+        # return self.renderer.render(
+        #     self._render_state(), planner_debug=self.planner_debug
+        # )
+        pass
 
     def close(self):
-        if self.renderer is not None:
-            self.renderer.close()
-            self.renderer = None
+        # if self.renderer is not None:
+        #     self.renderer.close()
+        #     self.renderer = None
+        pass
+
+if __name__ == "__main__":
+    env = BeamNGTrailerEnv()
+    env.reset()
+    obs, reward, term, *_ = env.step(np.array([0, 0]))
+    print(obs, term)
+    while True:
+        obs, reward, term, *_ = env.step(np.array([0, 1]))
+        print(obs, term)

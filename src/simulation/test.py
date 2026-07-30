@@ -11,7 +11,7 @@ import gymnasium as gym
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from beamngpy import BeamNGpy, Scenario, Vehicle, Road
+from beamngpy import BeamNGpy, Scenario, Vehicle, Road, angle_to_quat
 from pathlib import Path
 import pandas as pd
 
@@ -78,10 +78,15 @@ r.add_nodes(*(tail.tolist()))
 roads.append(r)
 scenario.add_road(r)
 
+def yaw_to_quat(yaw):
+    yaw -= np.pi / 2
+    return (0.0, 0.0, np.cos(yaw/2), np.sin(yaw/2))  # terrible
+
 tractor = Vehicle("car", model="scintilla", part_config="vehicles/scintilla/hitch.pc")
-dx, dy = -(centerline[1] - centerline[0])[:2]
-yaw = np.arctan2(dx, dy)
-yaw_quat = np.array([0.0, 0.0, float(np.sin(yaw * 0.5)), float(np.cos(yaw * 0.5))])
+dx, dy = (centerline[1] - centerline[0])[:2]
+yaw = np.arctan2(dy, dx)
+# yaw_quat = np.array([0.0, 0.0, -float(np.sin(yaw * 0.5)), float(np.cos(yaw * 0.5))])
+yaw_quat = yaw_to_quat(yaw)
 scenario.add_vehicle(
     tractor,
     pos=centerline[0, :3],
@@ -91,7 +96,7 @@ scenario.add_vehicle(
 trailer = Vehicle("trailer", model="cargotrailer")
 l = 7.0
 tangent = np.array([dx, dy, 0]) / np.linalg.norm(np.array([dx, dy, 0]))
-trailer_pos = centerline[0, :3].reshape(3) + tangent * l
+trailer_pos = centerline[0, :3].reshape(3) - tangent * l
 print(trailer_pos)
 scenario.add_vehicle(
     trailer,
