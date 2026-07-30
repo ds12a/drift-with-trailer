@@ -90,7 +90,7 @@ class BeamNGTrailerEnv(gym.Env):
 
         bng = BeamNGpy("localhost", 25252, home=beamng_home_dir, user=beamng_user_dir)
         bng.open(launch=True)
-        bng.settings.set_deterministic(steps_per_second=50)
+        bng.settings.set_deterministic(steps_per_second=20)
         self.bng = bng  # For convenience
 
         scenario = Scenario("tech_ground", "Barcelona")
@@ -163,7 +163,7 @@ class BeamNGTrailerEnv(gym.Env):
         """
         In BeamNG convention, its really weird
         """
-        yaw += np.pi / 2
+        yaw -= np.pi / 2
         return (0.0, 0.0, np.cos(yaw / 2), np.sin(yaw / 2))  # terrible
 
     def _initial_beamng_state(self):
@@ -172,7 +172,7 @@ class BeamNGTrailerEnv(gym.Env):
         dx, dy = (centerline[1] - centerline[0])[:2]
         tangent = np.array([dx, dy, 0]) / np.linalg.norm(np.array([dx, dy, 0]))
         l = 7.0
-        trailer_xyz = tractor_xyz + tangent * l
+        trailer_xyz = tractor_xyz - tangent * l
         yaw = np.arctan2(dy, dx)
         return tractor_xyz, trailer_xyz, yaw
 

@@ -50,7 +50,8 @@ beamng_home_dir = None
 beamng_user_dir = None
 
 if beamng_home_dir is None:
-    beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
+    # beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
+    beamng_home_dir = Path.home() / "Executables" / "BeamNG"
 if beamng_user_dir is None:
     beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech/current"
 print(beamng_home_dir)
@@ -104,7 +105,25 @@ scenario.add_vehicle(
     rot_quat=yaw_quat,
 )
 
+
 scenario.make(bng)
 bng.scenario.load(scenario)
 bng.scenario.start()
 tractor.couplers.attach()
+
+cfg = trailer.get_part_config()
+node = cfg["partsTree"]["children"]["cargotrailer_load"]
+node["chosenPartName"] = "cargotrailer_load_cargo_load_box_4XL"
+node["partPath"] = "/cargotrailer_load/cargotrailer_load_cargo_load_box_4XL"
+trailer.set_part_config(cfg)
+
+bng.camera.set_player_mode(tractor, "orbit", {
+    "distance": 40.0,
+    "camMaxDist": 40.0,
+    "camDist": 40.0,
+   
+})
+
+print(bng.camera.get_player_modes(tractor))
+print(trailer.get_part_config())          
+# print(bng.vehicles.get_part_options(trailer))  
