@@ -1,3 +1,5 @@
+import threading
+import time
 from typing import Any
 
 from src.simulation.config.trailer_bicycle_config import (
@@ -12,6 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from beamngpy import BeamNGpy, Scenario, Vehicle, Road, angle_to_quat
+from beamngpy.api.beamng.debug import DebugApi
+from beamngpy.api.vehicle import AIApi
+from beamngpy.misc.colors import coerce_color
 from pathlib import Path
 import pandas as pd
 
@@ -50,8 +55,7 @@ beamng_home_dir = None
 beamng_user_dir = None
 
 if beamng_home_dir is None:
-    # beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
-    beamng_home_dir = Path.home() / "Executables" / "BeamNG"
+    beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
 if beamng_user_dir is None:
     beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech/current"
 print(beamng_home_dir)
@@ -83,7 +87,8 @@ def yaw_to_quat(yaw):
     yaw -= np.pi / 2
     return (0.0, 0.0, np.cos(yaw/2), np.sin(yaw/2))  # terrible
 
-tractor = Vehicle("car", model="scintilla", part_config="vehicles/scintilla/hitch.pc")
+# tractor = Vehicle("car", model="scintilla", part_config="vehicles/scintilla/hitch.pc")
+tractor = Vehicle("car", model="pickup", part_config="vehicles/pickup/hitch.pc")
 dx, dy = (centerline[1] - centerline[0])[:2]
 yaw = np.arctan2(dy, dx)
 # yaw_quat = np.array([0.0, 0.0, -float(np.sin(yaw * 0.5)), float(np.cos(yaw * 0.5))])
@@ -95,7 +100,7 @@ scenario.add_vehicle(
 )
 
 trailer = Vehicle("trailer", model="cargotrailer")
-l = 7.0
+l = 7.5
 tangent = np.array([dx, dy, 0]) / np.linalg.norm(np.array([dx, dy, 0]))
 trailer_pos = centerline[0, :3].reshape(3) - tangent * l
 print(trailer_pos)
@@ -111,19 +116,38 @@ bng.scenario.load(scenario)
 bng.scenario.start()
 tractor.couplers.attach()
 
-cfg = trailer.get_part_config()
-node = cfg["partsTree"]["children"]["cargotrailer_load"]
-node["chosenPartName"] = "cargotrailer_load_cargo_load_box_4XL"
-node["partPath"] = "/cargotrailer_load/cargotrailer_load_cargo_load_box_4XL"
-trailer.set_part_config(cfg)
 
-bng.camera.set_player_mode(tractor, "orbit", {
-    "distance": 40.0,
-    "camMaxDist": 40.0,
-    "camDist": 40.0,
-   
-})
+debug = DebugApi(bng)
+list_center = centerline[:, :3].tolist()
+# print(list_center)
 
-print(bng.camera.get_player_modes(tractor))
-print(trailer.get_part_config())          
+lua = """
+local ok, err = pcall(function()
+    local p1 = Point3F(-200.38, 371.68, 1.0)
+    local p2 = Point3F(-170.0, 360.0, 1.0)
+    local c = ColorF(0, 1, 0, 1)
+    debugDrawer:drawLine(p1, p2, c)
+end)
+if not ok then return tostring(err) else return "ok" end
+"""
+print(bng.control.queue_lua_command(lua, response=True))
+
+
+resp = debug.add_spheres(list_center, [0.5] * len(list_center), coerce_color("r", alpha=0.5))
+# time.sleep(0.5)
+# print(resp)
+
+# traj_line = [{"pos": (x, y, z), "speed": 15} for x, y, z in list_center]
+# traj_line[0]["speed"] = 0
+# traj_line[1]["speed"] = 2
+
+try:
+    # ai = AIApi(tractor)
+    # ai.set_line(traj_line)
+    # tractor.couplers.attach()
+    threading.Event().wait()
+finally:
+    debug.remove_spheres(resp)
+
+
 # print(bng.vehicles.get_part_options(trailer))  
