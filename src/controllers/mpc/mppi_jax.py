@@ -224,3 +224,8 @@ class MPPI_Jax:
         self.last_trajectory = u
 
         return u[0]
+    def reset(self):
+        """
+        Clean resets the MPPI (i.e. when the env is reset and there is NaN pollution in history)
+        """
+        self.last_trajectory = None

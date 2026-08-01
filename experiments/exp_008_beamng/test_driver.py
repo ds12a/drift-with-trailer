@@ -37,7 +37,7 @@ logging.getLogger("beamngpy").propagate = False
 V_TARGET = -60 / 3.6
 
 config = BeamNGTrailerEnvConfig(
-    ".", TrackConfig(mu=1.0, width=10), bng_pickup_trailer_cfg, SimulationConfig()
+    ".", TrackConfig(mu=1.0, width=30), bng_pickup_trailer_cfg, SimulationConfig()
 )
 
 config.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
@@ -98,8 +98,8 @@ else:
         p_weight=1e2,
         p_slow_weight=1e0,
         s_weight=2e1,
-        c_weight=1e-2,
-        a_weight=1e2,
+        c_weight=1e1,
+        a_weight=2e2,
     )
     mpc = MPPI_Jax_Debug(
         6,
@@ -165,10 +165,10 @@ try:
         # slip_angles_f.append(alpha_f)
         # slip_angles_r.append(alpha_r)
 
-        print(
-            f"Step: {i:<5d} | "
-            f"State: {observation}"
-        )
+        # print(
+        #     f"Step: {i:<5d} | "
+        #     f"State: {observation}"
+        # )
         i += 1
 
         action = jnp.array([-u[0], u[1]])

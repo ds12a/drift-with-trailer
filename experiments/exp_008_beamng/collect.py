@@ -1,6 +1,10 @@
-import logging
 import os
 
+# JAX is stupid
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
+
+import logging
 import cv2
 import numpy as np
 import time
@@ -35,9 +39,6 @@ absl.logging.set_verbosity(absl.logging.WARNING)
 logging.getLogger("beamngpy").setLevel(logging.WARNING)
 logging.getLogger("beamngpy").propagate = False
 
-# JAX is stupid
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 def build_planner_debug(all_samples, n_vis):
     if all_samples is None:
@@ -63,14 +64,18 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
         traj = []
 
         for i in range(2000):
+            # print(terminated)
             if terminated:
-                time.sleep(1e9)
-                data.add(np.array(traj), env_i, ctl_i, 0)
+                # print(np.array(traj).shape)
+                if len(traj) > 0:  # Should impl larger cutoff
+                    data.add(np.array(traj), env_i, ctl_i, 0)
                 traj = []
                 t += 1
-                if t > 2:
-                    break
+                # if t > 2:
+                #     break
                 env.reset()
+                mpc.reset()
+                observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
             start = time.perf_counter()
 
@@ -118,7 +123,7 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
             # )
             i += 1
 
-            action = jnp.array([u[0], u[1]])
+            action = jnp.array([-u[0], u[1]])
 
             n_viz = 10    
             # env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
@@ -135,11 +140,15 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
 
             print(
                 f"Iter: {i}/{2000}, terimnated: {t}, "
-                f"commanded: [{u[0]:6.3f}, {u[1]:6.3f}], "
+                f"commanded: [{action[0]:6.3f}, {action[1]:6.3f}], "
                 f"actual: [{observation[8]:6.3f}, {observation[9]:6.3f}]",
                 # end="",
             )
-            
+
+            if jnp.any(jnp.isnan(action)):
+                terminated = True
+                continue
+
             traj.append(
                 np.array([
                     np.sin(observation[2] - observation[3]),
@@ -151,8 +160,8 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
                     env.unwrapped.track.find_mu(state.x, state.y),
                     observation[8],
                     observation[9],
-                    u[0],
-                    u[1],
+                    action[0],
+                    action[1],
                 ])
             )
             observation, reward, terminated, truncated, info = env.step(action)
@@ -186,7 +195,7 @@ env = BeamNGTrailerEnv(
 
 d = DataCollector(11, 0.05)
 
-vels = [60, -60]
+vels = [60, -60, 100, -100]
 controllers = []
 
 for v in vels:
@@ -197,7 +206,7 @@ for v in vels:
             v_target=v,
             p_weight=1e2,
             p_slow_weight=1e0,
-            c_weight=1e0,
+            c_weight=1e1,
             s_weight=1e2,
             a_weight=7e2,
         )
@@ -224,7 +233,7 @@ for v in vels:
             p_weight=1e2,
             p_slow_weight=1e0,
             s_weight=2e1,
-            c_weight=1e-2,
+            c_weight=1e0,
             a_weight=1e2,
         )
         mpc = MPPI_Jax_Debug(

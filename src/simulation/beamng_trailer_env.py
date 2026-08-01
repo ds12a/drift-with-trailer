@@ -147,12 +147,12 @@ class BeamNGTrailerEnv(gym.Env):
             seg = centerline[start : start + CHUNK_SIZE + 1]
             if len(seg) < 2:
                 continue
-            r = Road(material, rid=f"segment_{k}", looped=False)
+            r = Road(material, rid=f"segment_{k}", looped=False, interpolate=False)
             r.add_nodes(*(seg.tolist()))
             roads.append(r)
             scenario.add_road(r)
         tail = np.vstack([centerline[-1], centerline[0]])
-        r = Road(material, rid=f"segment_close", looped=False)
+        r = Road(material, rid=f"segment_close", looped=False, interpolate=False)
         r.add_nodes(*(tail.tolist()))
         roads.append(r)
         scenario.add_road(r)
@@ -265,7 +265,9 @@ class BeamNGTrailerEnv(gym.Env):
         phi1dot = (phi1 - self._state.yaw_truck) / self.config.simulation.dt
         phi2dot = (phi2 - self._state.yaw_trailer) / self.config.simulation.dt
 
-        delta = self.tractor.sensors["e1"]["steering_input"]
+        # print("steer: ", self.tractor.sensors["e1"]["steering"])
+
+        delta = self.tractor.sensors["e1"]["steering"] / 720.0 # Normalization
         throt = self.tractor.sensors["e1"]["throttle"]
         brake = self.tractor.sensors["e1"]["brake"]
         accel_realized = throt - brake
@@ -407,7 +409,7 @@ if __name__ == "__main__":
     obs, reward, term, *_ = env.step(np.array([0, 0]))
     print(obs, term)
     while True:
-        obs, reward, term, *_ = env.step(np.array([0.25, 1]))
+        obs, reward, term, *_ = env.step(np.array([1, 0]))
         if term:
             break
         print(obs, term)

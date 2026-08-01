@@ -57,7 +57,7 @@ def fiala_dyn(r):
 
     sh, ch, v_1x, v_1y, phi_1_dot, phi_2_dot, steer_cmd, accel_cmd = r[..., X_COLS]
     vehicle = V
-    steer_cmd = jnp.clip(steer_cmd, -1.0, 1.0)
+    steer_cmd = -jnp.clip(steer_cmd, -1.0, 1.0)  # BeamNG convention is opposite
     accel_cmd = jnp.clip(accel_cmd, -1.0, 1.0)
 
     throttle = jnp.maximum(accel_cmd, 0.0)
