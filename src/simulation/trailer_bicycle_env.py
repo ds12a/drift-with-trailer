@@ -86,6 +86,7 @@ class DynamicTrailerBicycleModel:
             steer=0.0,
             accel=0.0,
         )
+        
 
     def step(self, state: VehicleState, action: jnp.ndarray, track: TrackModel) -> VehicleState:
         x, y, phi_1, phi_2, v_1x, v_1y, phi_1_dot, phi_2_dot, _, _ = astuple(state)
@@ -111,22 +112,40 @@ class DynamicTrailerBicycleModel:
         $$v_{2y} = v_{1x} \sin \alpha + (v_{1}y - \dot{\phi}_{1}h) \cos \alpha - L_{2f}\dot{\phi}_{2}$$
 
         """
+        def slip_angle(v_lon, v_lat, eps=0.5):
+            return -jnp.arctan2(v_lat, jnp.maximum(jnp.abs(v_lon), eps))
+
+        u = np.array(action)
+        mu = track.find_mu(x, y)
 
         vehicle = self.config.vehicle
-        steer_cmd = jnp.clip(action[0], -1.0, 1.0)
-        accel_cmd = jnp.clip(action[1], -1.0, 1.0)
+        steer_cmd = jnp.clip(u[0], -1.0, 1.0)
+        accel_cmd = jnp.clip(u[1], -1.0, 1.0)
         dt = self.config.simulation.dt
 
         throttle = jnp.maximum(accel_cmd, 0.0)
         brake = -jnp.minimum(accel_cmd, 0.0)
-
-        vx_safe = _signed_safe(v_1x)
-
+        
+        # Steer
         delta = steer_cmd * vehicle.max_steer_rad
-        alpha_f = delta - jnp.arctan2(v_1y + vehicle.lf * phi_1_dot, vx_safe)
-        alpha_r = -jnp.arctan2(v_1y - vehicle.lr * phi_1_dot, vx_safe)
+        cd = jnp.cos(delta)
+        sd = jnp.sin(delta)
 
-        mu = track.find_mu(state.x, state.y)
+        # Hitch
+        alpha = phi_1 - phi_2
+        sa = jnp.sin(alpha)
+        ca = jnp.cos(alpha)
+
+        v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
+        v_2y = v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
+
+        # Original formulas do not work when the trailer drives backwards
+        v_yf = v_1y + vehicle.lf * phi_1_dot
+        v_yr = v_1y - vehicle.lr * phi_1_dot
+        v_2y_wheel = v_2y - vehicle.lr * phi_2_dot
+        alpha_f = slip_angle(v_1x * cd + v_yf * sd, -v_1x * sd + v_yf * cd)
+        alpha_r = slip_angle(v_1x, v_yr)
+        alpha_t = slip_angle(v_2x, v_2y_wheel)
 
         fzf = vehicle.mass * 9.8 * vehicle.lr / (
             vehicle.lf + vehicle.lr
@@ -153,34 +172,13 @@ class DynamicTrailerBicycleModel:
 
         F_1yr = -compute_fy(alpha_r, vehicle.cornering_stiffness_rear, fzr, fxr, mu, vehicle.gamma)
 
-        alpha = phi_1 - phi_2
-        sa = jnp.sin(alpha)
-        ca = jnp.cos(alpha)
-
-        v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
-        v_2y = v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
-
-        v2x_safe = _signed_safe(v_2x)
-        alpha_t = -jnp.arctan2(v_2y - vehicle.l2r * phi_2_dot, v2x_safe)
-
-        x_2 = x + jnp.sin(phi_1) * vehicle.lr + jnp.sin(phi_2) * vehicle.l2r
-        y_2 = y - jnp.cos(phi_1) * vehicle.lr - jnp.cos(phi_2) * vehicle.l2r
-
-        mu_trailer = track.find_mu(x_2, y_2)
 
         fzr_trailer = vehicle.trailer_mass * 9.8 * vehicle.l2f / (vehicle.l2f + vehicle.l2r)
         F_2yr = -compute_fy(
-            alpha_t,
-            vehicle.cornering_stiffness_trailer,
-            fzr_trailer,
-            0,
-            mu_trailer,
-            vehicle.gamma,
+            alpha_t, vehicle.cornering_stiffness_trailer, fzr_trailer, 0, mu, vehicle.gamma
         )
 
         total_mass = vehicle.mass + vehicle.trailer_mass
-        cd = jnp.cos(delta)
-        sd = jnp.sin(delta)
         alpha_dot = phi_1_dot - phi_2_dot
 
         A = jnp.array(

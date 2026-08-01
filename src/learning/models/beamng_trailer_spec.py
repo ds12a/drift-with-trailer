@@ -51,6 +51,8 @@ def compute_fy(alpha, cc, fz, fx, mu, gamma):
     )
 
 def fiala_dyn(r):
+    def slip_angle(v_lon, v_lat, eps=0.5):
+        return -jnp.arctan2(v_lat, jnp.maximum(jnp.abs(v_lon), eps))
     mu = 1.0  # Assumption for prior
 
     sh, ch, v_1x, v_1y, phi_1_dot, phi_2_dot, steer_cmd, accel_cmd = r[..., X_COLS]
@@ -60,11 +62,26 @@ def fiala_dyn(r):
 
     throttle = jnp.maximum(accel_cmd, 0.0)
     brake = -jnp.minimum(accel_cmd, 0.0)
-
-    vx_safe = jnp.maximum(jnp.abs(v_1x), 0.5)
+    
+    # Steer
     delta = steer_cmd * vehicle.max_steer_rad
-    alpha_f = delta - jnp.arctan2(v_1y + vehicle.lf * phi_1_dot, vx_safe)
-    alpha_r = -jnp.arctan2(v_1y - vehicle.lr * phi_1_dot, vx_safe)
+    cd = jnp.cos(delta)
+    sd = jnp.sin(delta)
+
+    # Hitch
+    sa = sh
+    ca = ch
+
+    v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
+    v_2y = v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
+
+    # Original formulas do not work when the trailer drives backwards
+    v_yf = v_1y + vehicle.lf * phi_1_dot
+    v_yr = v_1y - vehicle.lr * phi_1_dot
+    v_2y_wheel = v_2y - vehicle.lr * phi_2_dot
+    alpha_f = slip_angle(v_1x * cd + v_yf * sd, -v_1x * sd + v_yf * cd)
+    alpha_r = slip_angle(v_1x, v_yr)
+    alpha_t = slip_angle(v_2x, v_2y_wheel)
 
     fzf = vehicle.mass * 9.8 * vehicle.lr / (
         vehicle.lf + vehicle.lr
@@ -90,14 +107,7 @@ def fiala_dyn(r):
     fxr = mu * fzr * jnp.tanh(vehicle.mass * commanded / (fzr * mu))
 
     F_1yr = -compute_fy(alpha_r, vehicle.cornering_stiffness_rear, fzr, fxr, mu, vehicle.gamma)
-    sa = sh
-    ca = ch
 
-    v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
-    v_2y = v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
-
-    v2x_safe = jnp.maximum(jnp.abs(v_2x), 0.5)
-    alpha_t = -jnp.arctan2(v_2y - vehicle.l2r * phi_2_dot, v2x_safe)
 
     fzr_trailer = vehicle.trailer_mass * 9.8 * vehicle.l2f / (vehicle.l2f + vehicle.l2r)
     F_2yr = -compute_fy(
@@ -105,8 +115,6 @@ def fiala_dyn(r):
     )
 
     total_mass = vehicle.mass + vehicle.trailer_mass
-    cd = jnp.cos(delta)
-    sd = jnp.sin(delta)
     alpha_dot = phi_1_dot - phi_2_dot
 
     A = jnp.array(

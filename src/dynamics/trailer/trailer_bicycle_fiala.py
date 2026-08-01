@@ -100,12 +100,13 @@ def gen_util_funs(
             -fy_max * jnp.sign(alpha),
         )
 
+    # Util function, wraps Q2/3 to Q1/4 becuase the arctan was questionable
+    def slip_angle(v_lon, v_lat, eps=0.5):
+        return -jnp.arctan2(v_lat, jnp.maximum(jnp.abs(v_lon), eps))
 
+    # TODO the same dynamics now exist in 3 different places, they must be consolidated
     @jax.jit
     def dynamics(state, u):
-        def _signed_safe(v, eps=0.5):
-            s = jnp.where(v < 0.0, -1.0, 1.0)          # sign, with 0 -> +1
-            return jnp.where(jnp.abs(v) < eps, s * eps, v)
         x, y, phi_1, phi_2, v_1x, v_1y, phi_1_dot, phi_2_dot, mu, arc_len = state
 
         vehicle = params.vehicle
@@ -115,11 +116,27 @@ def gen_util_funs(
 
         throttle = jnp.maximum(accel_cmd, 0.0)
         brake = -jnp.minimum(accel_cmd, 0.0)
-
-        vx_safe = _signed_safe(v_1x)
+        
+        # Steer
         delta = steer_cmd * vehicle.max_steer_rad
-        alpha_f = delta - jnp.arctan2(v_1y + vehicle.lf * phi_1_dot, vx_safe)
-        alpha_r = -jnp.arctan2(v_1y - vehicle.lr * phi_1_dot, vx_safe)
+        cd = jnp.cos(delta)
+        sd = jnp.sin(delta)
+
+        # Hitch
+        alpha = phi_1 - phi_2
+        sa = jnp.sin(alpha)
+        ca = jnp.cos(alpha)
+
+        v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
+        v_2y = v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
+
+        # Original formulas do not work when the trailer drives backwards
+        v_yf = v_1y + vehicle.lf * phi_1_dot
+        v_yr = v_1y - vehicle.lr * phi_1_dot
+        v_2y_wheel = v_2y - vehicle.lr * phi_2_dot
+        alpha_f = slip_angle(v_1x * cd + v_yf * sd, -v_1x * sd + v_yf * cd)
+        alpha_r = slip_angle(v_1x, v_yr)
+        alpha_t = slip_angle(v_2x, v_2y_wheel)
 
         fzf = vehicle.mass * 9.8 * vehicle.lr / (
             vehicle.lf + vehicle.lr
@@ -146,15 +163,6 @@ def gen_util_funs(
 
         F_1yr = -compute_fy(alpha_r, vehicle.cornering_stiffness_rear, fzr, fxr, mu, vehicle.gamma)
 
-        alpha = phi_1 - phi_2
-        sa = jnp.sin(alpha)
-        ca = jnp.cos(alpha)
-
-        v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
-        v_2y = v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
-
-        v2x_safe = _signed_safe(v_2x)
-        alpha_t = -jnp.arctan2(v_2y - vehicle.l2r * phi_2_dot, v2x_safe)
 
         fzr_trailer = vehicle.trailer_mass * 9.8 * vehicle.l2f / (vehicle.l2f + vehicle.l2r)
         F_2yr = -compute_fy(
@@ -162,8 +170,6 @@ def gen_util_funs(
         )
 
         total_mass = vehicle.mass + vehicle.trailer_mass
-        cd = jnp.cos(delta)
-        sd = jnp.sin(delta)
         alpha_dot = phi_1_dot - phi_2_dot
 
         A = jnp.array(
@@ -249,8 +255,8 @@ def gen_util_funs(
             [
                 xdot,
                 ydot,
-                phi_1_dot,
-                phi_2_dot,
+                avg_phi_1_dot,
+                avg_phi_2_dot,
                 v_1x_dot,
                 v_1y_dot,
                 phi_1_ddot,
@@ -301,10 +307,31 @@ def gen_util_funs(
             throttle = throttle_cmd
             brake = brake_cmd
 
-            vx_safe = jnp.maximum(jnp.abs(state_xdot), 0.5)
-            steer_angle = steer * vehicle.max_steer_rad
-            alpha_f = steer_angle - jnp.arctan2(state_ydot + vehicle.lf * state_yaw_dot, vx_safe)
-            alpha_r = -jnp.arctan2(state_ydot - vehicle.lr * state_yaw_dot, vx_safe)
+            v_1x = state_xdot
+            v_1y = state_ydot
+
+            phi_1_dot = state_yaw_dot
+            phi_2_dot = state_yaw_trailer_dot
+
+            # Steer
+            delta = steer_cmd * vehicle.max_steer_rad
+            cd = jnp.cos(delta)
+            sd = jnp.sin(delta)
+
+            # Hitch
+            alpha = state_yaw - state_yaw_trailer
+            sa = jnp.sin(alpha)
+            ca = jnp.cos(alpha)
+
+            v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
+            v_2y = v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
+
+            v_yf = v_1y + vehicle.lf * phi_1_dot
+            v_yr = v_1y - vehicle.lr * phi_1_dot
+            v_2y_wheel = v_2y - vehicle.lr * phi_2_dot
+            alpha_f = slip_angle(v_1x * cd + v_yf * sd, -v_1x * sd + v_yf * cd)
+            alpha_r = slip_angle(v_1x, v_yr)
+            alpha_t = slip_angle(v_2x, v_2y_wheel)
 
             fzr = vehicle.mass * 9.8 * vehicle.lf / (vehicle.lf + vehicle.lr)
             commanded = throttle * vehicle.max_accel - brake * vehicle.max_brake
