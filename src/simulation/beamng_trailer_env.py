@@ -191,7 +191,7 @@ class BeamNGTrailerEnv(gym.Env):
 
         self._state: VehicleState | None = None
 
-        obs_dim = 6
+        obs_dim = 10
         self._pool = ThreadPoolExecutor(max_workers=2)
 
         self.observation_space = gym.spaces.Box(
@@ -265,33 +265,34 @@ class BeamNGTrailerEnv(gym.Env):
         phi1dot = (phi1 - self._state.yaw_truck) / self.config.simulation.dt
         phi2dot = (phi2 - self._state.yaw_trailer) / self.config.simulation.dt
 
-        delta = self.tractor.sensors["e1"]["steering"]
+        delta = self.tractor.sensors["e1"]["steering_input"]
         throt = self.tractor.sensors["e1"]["throttle"]
+        brake = self.tractor.sensors["e1"]["brake"]
+        accel_realized = throt - brake
+        # print(delta, throt)
 
-        return VehicleState(x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, delta, throt)
+        return VehicleState(x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, delta, accel_realized)
 
     def _observation(self) -> np.ndarray:
         assert self._state is not None
-        obs = np.concatenate(
+        obs = np.array(
             [
-                np.array(
-                    [
-                        # self._state.progress,
-                        # self._state.lateral_error,
-                        # self._state.heading_error,
-                        self._state.x,
-                        self._state.y,
-                        self._state.vx,
-                        self._state.vy,
-                        self._state.yaw_truck_rate,
-                        self._state.yaw_trailer_rate,
-                        self._state.yaw_truck,
-                        self._state.yaw_trailer,
-                        # self.track.sample(self._state.progress).curvature,
-                    ],
-                    dtype=np.float32,
-                ),
-            ]
+                # self._state.progress,
+                # self._state.lateral_error,
+                # self._state.heading_error,
+                self._state.x,
+                self._state.y,
+                self._state.yaw_truck,
+                self._state.yaw_trailer,
+                self._state.vx,
+                self._state.vy,
+                self._state.yaw_truck_rate,
+                self._state.yaw_trailer_rate,
+                self._state.steer,
+                self._state.accel,
+                # self.track.sample(self._state.progress).curvature,
+            ],
+            dtype=np.float32,
         )
         return obs
 
@@ -406,7 +407,7 @@ if __name__ == "__main__":
     obs, reward, term, *_ = env.step(np.array([0, 0]))
     print(obs, term)
     while True:
-        obs, reward, term, *_ = env.step(np.array([0, 1]))
+        obs, reward, term, *_ = env.step(np.array([0.25, 1]))
         if term:
-            env.reset()
+            break
         print(obs, term)

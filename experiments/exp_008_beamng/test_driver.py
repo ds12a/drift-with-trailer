@@ -9,8 +9,9 @@ import jax
 import jax.numpy as jnp
 from pathlib import Path
 from dataclasses import astuple
-# from flax import nnx
-# import orbax.checkpoint as ocp  # this breaks beamng logging
+from flax import nnx
+import absl.logging
+import orbax.checkpoint as ocp  # this breaks beamng logging
 
 from src.simulation.beamng_trailer_env import BeamNGTrailerEnv, VehicleState, bng_pickup_trailer_cfg
 from src.controllers.mpc.mppi_jax import MPPI_Jax
@@ -25,8 +26,13 @@ from src.simulation.config.trailer_beamng_config import (
 from gymnasium.wrappers import RecordVideo
 import json
 
+import logging
+
+# Orbax is stupid
+absl.logging.set_verbosity(absl.logging.WARNING)
 logging.getLogger("beamngpy").setLevel(logging.WARNING)
-logging.root.setLevel(logging.WARNING)
+logging.getLogger("beamngpy").propagate = False
+
 # Reverse/fwd configs should be automated
 V_TARGET = -60 / 3.6
 
@@ -120,19 +126,7 @@ observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 speeds, slip_angles_f, slip_angles_r, yaw_rates = [], [], [], []
 i = 0
 try:
-    # cv2.namedWindow("sim", cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
-    # Necessary, the model panics when seeing 0/default windoww
-    # for _ in range(HISTORY + 1):
-    #     u = jnp.array([0.0, -0.01])
-    #     action = np.array(u)
-    #     observation, reward, terminated, truncated, info = env.step(action)
 
-    #     state = env.unwrapped._state
-    #     arclen = env.unwrapped.track._arc_samples[env.unwrapped._last_index]
-    #     curr = jnp.concatenate(
-    #         [jnp.array([*astuple(state)[:8]]), jnp.array([u[0], u[1]]), jnp.array([arclen])]
-    #     )
-    #     history = jnp.concatenate([history[11:], curr])
     for i in range(2000):
         if terminated:
             break
@@ -173,17 +167,11 @@ try:
 
         print(
             f"Step: {i:<5d} | "
-            f"Time: {elapsed:<7.3f} | "
-            f"u: {u[0]:<7.3f} {u[1]:<7.3f} | "
-            # f"Prog: {state.progress:<6.3f} | "
-            f"vx: {state.vx:<7.3f} | "
-            f"vy: {state.vy:<7.3f} | "
-            f"|v|: {jnp.hypot(state.vx, state.vy):<7.3f} | "
-            f"mu: {env.unwrapped.track.find_mu(state.x, state.y):<7.3f} | "
+            f"State: {observation}"
         )
         i += 1
 
-        action = jnp.array([u[0], u[1]])
+        action = jnp.array([-u[0], u[1]])
 
         n_viz = 10    
         env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
@@ -191,12 +179,12 @@ try:
         observation, reward, terminated, truncated, info = env.step(action)
     cutoff = 100
     print(
-    f"Iters: {i}, "
-    f"Reverse: {V_TARGET > 0}, "
-    f"Avg speed: {jnp.mean(jnp.array(speeds[cutoff:])) * 3.6}, "
-    f"Avg alpha_f: {jnp.mean(jnp.array(slip_angles_f[cutoff:]))}, "
-    f"Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, "
-    f"Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
+        f"Iters: {i}, "
+        f"Reverse: {V_TARGET > 0}, "
+        f"Avg speed: {jnp.mean(jnp.array(speeds[cutoff:])) * 3.6}, "
+        f"Avg alpha_f: {jnp.mean(jnp.array(slip_angles_f[cutoff:]))}, "
+        f"Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, "
+        f"Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
     )
 finally:
     env.close()

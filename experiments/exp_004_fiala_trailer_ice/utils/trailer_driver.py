@@ -57,8 +57,8 @@ def run_mpc(
         env_kwargs = {
             "renderer": "pybullet",
             "render_mode": "rgb_array_birds_eye",
-            "render_width": 600,
-            "render_height": 400,
+            "render_width": 300,
+            "render_height": 200,
         }
 
     env = TrailerBicycleEnv(**env_kwargs)
@@ -118,7 +118,7 @@ def run_mpc(
 
             xhist = None
             if debug:
-                u, xhist = mpc.run_mpc(mpc_state)
+                u, xhist, *_ = mpc.run_mpc(mpc_state)
             else:
                 u = mpc.run_mpc(mpc_state)
             

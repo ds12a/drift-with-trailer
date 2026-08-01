@@ -54,6 +54,9 @@ def compute_fy(alpha, cc, fz, fx, mu, gamma):
         -fy_max * jnp.sign(alpha),
     )
 
+def _signed_safe(v, eps=0.5):
+    s = jnp.where(v < 0.0, -1.0, 1.0)          # sign, with 0 -> +1
+    return jnp.where(jnp.abs(v) < eps, s * eps, v)
 
 class DynamicTrailerBicycleModel:
     def __init__(self, config: TrailerBicycleEnvConfig):
@@ -117,7 +120,8 @@ class DynamicTrailerBicycleModel:
         throttle = jnp.maximum(accel_cmd, 0.0)
         brake = -jnp.minimum(accel_cmd, 0.0)
 
-        vx_safe = jnp.maximum(jnp.abs(v_1x), 0.5)
+        vx_safe = _signed_safe(v_1x)
+
         delta = steer_cmd * vehicle.max_steer_rad
         alpha_f = delta - jnp.arctan2(v_1y + vehicle.lf * phi_1_dot, vx_safe)
         alpha_r = -jnp.arctan2(v_1y - vehicle.lr * phi_1_dot, vx_safe)
@@ -156,7 +160,7 @@ class DynamicTrailerBicycleModel:
         v_2x = v_1x * ca - (v_1y - phi_1_dot * vehicle.hitch_offset) * sa
         v_2y = v_1x * sa + (v_1y - phi_1_dot * vehicle.hitch_offset) * ca - vehicle.l2f * phi_2_dot
 
-        v2x_safe = jnp.maximum(jnp.abs(v_2x), 0.5)
+        v2x_safe = _signed_safe(v_2x)
         alpha_t = -jnp.arctan2(v_2y - vehicle.l2r * phi_2_dot, v2x_safe)
 
         x_2 = x + jnp.sin(phi_1) * vehicle.lr + jnp.sin(phi_2) * vehicle.l2r
