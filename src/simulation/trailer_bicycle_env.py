@@ -242,8 +242,8 @@ class DynamicTrailerBicycleModel:
         # Trapezoidal (avg) approximations
         avg_vx = 0.5 * (v_1x + next_vx)
         avg_vy = 0.5 * (v_1y + next_vy)
-        avg_phi_1_dot = 0.5 * (phi_1_dot + next_phi_1_dot)
-        avg_phi_2_dot = 0.5 * (phi_2_dot + next_phi_2_dot)
+        # avg_phi_1_dot = 0.5 * (phi_1_dot + next_phi_1_dot)
+        # avg_phi_2_dot = 0.5 * (phi_2_dot + next_phi_2_dot)
 
         # Change of frame
         xdot = avg_vx * jnp.cos(phi_1) - avg_vy * jnp.sin(phi_1)
@@ -251,8 +251,8 @@ class DynamicTrailerBicycleModel:
 
         next_x = x + xdot * dt
         next_y = y + ydot * dt
-        next_phi_1 = phi_1 + next_phi_1_dot * dt
-        next_phi_2 = phi_2 + next_phi_2_dot * dt
+        next_phi_1 = phi_1 + phi_1_dot * dt
+        next_phi_2 = phi_2 + phi_2_dot * dt
 
         return VehicleState(
             next_x,

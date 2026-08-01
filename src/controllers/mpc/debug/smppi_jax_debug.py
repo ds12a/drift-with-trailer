@@ -238,7 +238,7 @@ class SMPPI_Jax_Debug:
             torch.Tensor: Control output
         """
 
-        u, self.key, a, xhist = mpc_step(
+        u, self.key, a, xhist, vhist = mpc_step(
             x,
             self.last_trajectory,
             self.u_d,
@@ -252,4 +252,4 @@ class SMPPI_Jax_Debug:
 
         self.last_trajectory = u, a
 
-        return a[0], xhist
+        return a[0], xhist, vhist

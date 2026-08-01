@@ -219,8 +219,8 @@ def gen_util_funs(
 
         next_vx = v_1x + v_1x_dot * dt
         next_vy = v_1y + v_1y_dot * dt
-        next_phi_1_dot = phi_1_dot + phi_1_ddot * dt
-        next_phi_2_dot = phi_2_dot + phi_2_ddot * dt
+        # next_phi_1_dot = phi_1_dot + phi_1_ddot * dt
+        # next_phi_2_dot = phi_2_dot + phi_2_ddot * dt
 
         # Trapezoidal (avg) approximations
         avg_vx = 0.5 * (v_1x + next_vx)

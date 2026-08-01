@@ -237,3 +237,4 @@ if __name__ == "__main__":
     finally:
         learned.ax_floor()
         data.save(Path("./experiments/exp_007_vehicle_residual_dynamics/data_proc2.npz"))
+        data.norm_to_json("./experiments/exp_007_vehicle_residual_dynamics/data_proc2_stats.json")
