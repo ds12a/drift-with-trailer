@@ -51,7 +51,9 @@ def build_planner_debug(all_samples, n_vis):
     return {"candidate_xy": cand}
 
 
-def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCollector, env_i, ctl_i):
+def run_mpc(
+    env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCollector, env_i, ctl_i
+):
     env.reset()
     observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
@@ -91,15 +93,15 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
 
             xhist = None
             u, xhist, *_ = mpc.run_mpc(mpc_state)
-            
+
             u.block_until_ready()
 
             elapsed = time.perf_counter() - start
-            
+
             speeds.append(jnp.hypot(state.vx, state.vy))
             yaw_rates.append(state.yaw_truck_rate)
 
-            vx_safe = jnp.maximum(jnp.abs(state.vx), 0.5)
+            # vx_safe = jnp.maximum(jnp.abs(state.vx), 0.5)
             # steer_angle = state.steer * env.unwrapped.config.vehicle.max_steer_rad
             # alpha_f = steer_angle - jnp.arctan2(
             #     state.vy + env.unwrapped.config.vehicle.lf * state.yaw_truck_rate, vx_safe
@@ -125,7 +127,7 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
 
             action = jnp.array([-u[0], u[1]])
 
-            n_viz = 10    
+            # n_viz = 10
             # env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
             # self._state.x,
             # self._state.y,
@@ -150,19 +152,21 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
                 continue
 
             traj.append(
-                np.array([
-                    np.sin(observation[2] - observation[3]),
-                    np.cos(observation[2] - observation[3]),
-                    observation[4],
-                    observation[5],
-                    observation[6],
-                    observation[7],
-                    env.unwrapped.track.find_mu(state.x, state.y),
-                    observation[8],
-                    observation[9],
-                    action[0],
-                    action[1],
-                ])
+                np.array(
+                    [
+                        np.sin(observation[2] - observation[3]),
+                        np.cos(observation[2] - observation[3]),
+                        observation[4],
+                        observation[5],
+                        observation[6],
+                        observation[7],
+                        env.unwrapped.track.find_mu(state.x, state.y),
+                        observation[8],
+                        observation[9],
+                        action[0],
+                        action[1],
+                    ]
+                )
             )
             observation, reward, terminated, truncated, info = env.step(action)
         # cutoff = 100
@@ -182,78 +186,80 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
 
 
 # Reverse/fwd configs should be automated
+configs = [
+    BeamNGTrailerEnvConfig(
+        ".", TrackConfig(mu=m, width=30), bng_pickup_trailer_cfg, SimulationConfig()
+    )
+    for m in [ 1] # play with diff frictions later
+]
 
-config = BeamNGTrailerEnvConfig(
-    ".", TrackConfig(mu=1.0, width=30), bng_pickup_trailer_cfg, SimulationConfig()
-)
 
 # config.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
-env = BeamNGTrailerEnv(
-    config=config,
-)
-
-d = DataCollector(11, 0.05)
+d = DataCollector(11, 0.02) # maybe this is actually 0.05?
 
 vels = [60, -60, 100, -100]
 controllers = []
 
-for v in vels:
-    if v > 0:
-        dynamics, cost, bound, _ = gen_util_funs(
-            config,
-            reverse=False,
-            v_target=v,
-            p_weight=1e2,
-            p_slow_weight=1e0,
-            c_weight=1e1,
-            s_weight=1e2,
-            a_weight=7e2,
-        )
-        mpc = MPPI_Jax_Debug(
-            6,
-            2,
-            dynamics,
-            None,
-            cost,
-            bound,
-            jnp.diag(jnp.array([3e-3, 0.2])),
-            inverse_temp=0.5,
-            K=500,
-            step=0.05,
-            T=80,
-            alpha=0.05,
-        )
+for e in configs:
+    for v in vels:
+        if v > 0:
+            dynamics, cost, bound, _ = gen_util_funs(
+                e,
+                reverse=False,
+                v_target=v,
+                p_weight=1e2,
+                p_slow_weight=1e0,
+                c_weight=1e1,
+                s_weight=1e2,
+                a_weight=7e2,
+            )
+            mpc = MPPI_Jax_Debug(
+                6,
+                2,
+                dynamics,
+                None,
+                cost,
+                bound,
+                jnp.diag(jnp.array([3e-3, 0.2])),
+                inverse_temp=0.5,
+                K=500,
+                step=0.05,
+                T=80,
+                alpha=0.05,
+            )
 
-    else:
-        dynamics, cost, bound, _ = gen_util_funs(
-            config,
-            reverse=False,
-            v_target=v,
-            p_weight=1e2,
-            p_slow_weight=1e0,
-            s_weight=2e1,
-            c_weight=1e0,
-            a_weight=1e2,
-        )
-        mpc = MPPI_Jax_Debug(
-            6,
-            2,
-            dynamics,
-            None,
-            cost,
-            bound,
-            jnp.diag(jnp.array([3e-3, 0.2])),
-            inverse_temp=0.5,
-            K=500,
-            step=0.05,
-            T=55,
-            alpha=0.05,
-        )
-    controllers.append(mpc)
+        else:
+            dynamics, cost, bound, _ = gen_util_funs(
+                e,
+                reverse=False,
+                v_target=v,
+                p_weight=1e2,
+                p_slow_weight=1e0,
+                s_weight=2e1,
+                c_weight=1e0,
+                a_weight=1e2,
+            )
+            mpc = MPPI_Jax_Debug(
+                6,
+                2,
+                dynamics,
+                None,
+                cost,
+                bound,
+                jnp.diag(jnp.array([3e-3, 0.2])),
+                inverse_temp=0.5,
+                K=500,
+                step=0.05,
+                T=55,
+                alpha=0.05,
+            )
+        controllers.append(mpc)
 
 for i, c in enumerate(controllers):
-    run_mpc(env, c, d, 0, c)
+    env = BeamNGTrailerEnv(configs[i // len(vels)])
+    run_mpc(env, c, d, i // len(vels), i)
+    env.close()
 
 ds = d.store(STATE_FS.data_version, verbose=True)
 ds.save(Path("./experiments/exp_008_beamng/data_trial.npz"))

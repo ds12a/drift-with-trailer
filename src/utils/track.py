@@ -16,6 +16,8 @@ import jax.numpy as jnp
 
 from src.simulation.config.bicycle_config import TrackConfig
 
+class BadGuessException(Exception):
+    pass
 
 @dataclass(slots=True)
 class TrackProjection:
@@ -178,7 +180,7 @@ class TrackModel:
             raise RuntimeError(f"Unable to project point onto track: ({x}, {y})")
 
         if guess and distance_sq[index] > (self._longest_segment_length_sq + self.width**2):
-            raise RuntimeError(f"Guess {guess} is suspicious")
+            raise BadGuessException(f"Guess {guess} is suspicious")
 
         signed_offset = float(np.dot(point - projected[index], segments_normal_window[index]))
         arc = float(self._cumulative[window[index]] + t[index] * segments_len_window[index])

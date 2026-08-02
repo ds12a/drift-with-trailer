@@ -9,7 +9,7 @@ from src.simulation.config.trailer_beamng_config import (
     VehicleConfig,
     SimulationConfig,
 )
-from src.utils.track import TrackModel, TrackProjection
+from src.utils.track import TrackModel, TrackProjection, BadGuessException
 from src.simulation.config.trailer_beamng_config import BeamNGTrailerEnvConfig
 import gymnasium as gym
 import jax.numpy as jnp
@@ -97,7 +97,7 @@ class BeamNGTrailerEnv(gym.Env):
         self._debug_line_ids = []
 
         if beamng_home_dir is None:
-            beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
+            beamng_home_dir = Path.home() / "Executables/BeamNG" # "BeamNG.tech.v0.38.5.0"
         if beamng_user_dir is None:
             beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech/current"
 
@@ -133,7 +133,7 @@ class BeamNGTrailerEnv(gym.Env):
         bng.control.queue_lua_command(
             "settings.setValue('fpsLimitBackgroundEnabled', false)"
         )
-        # bng.set_steps_per_second(20)
+        bng.set_steps_per_second(1 / self.config.simulation.dt)
         self.bng = bng  # For convenience
 
 
@@ -262,8 +262,8 @@ class BeamNGTrailerEnv(gym.Env):
         vy = -s * vx_w + c * vy_w
 
         # Actual IMU polling is slow
-        phi1dot = (phi1 - self._state.yaw_truck) / self.config.simulation.dt
-        phi2dot = (phi2 - self._state.yaw_trailer) / self.config.simulation.dt
+        phi1dot = wrap_angle(phi1 - self._state.yaw_truck) / self.config.simulation.dt
+        phi2dot = wrap_angle(phi2 - self._state.yaw_trailer) / self.config.simulation.dt
 
         # print("steer: ", self.tractor.sensors["e1"]["steering"])
 
@@ -343,9 +343,17 @@ class BeamNGTrailerEnv(gym.Env):
         )  # Note: There is control lag so throttle, brake are independent from MPPI control
 
         self._step_count += 1
-        projection, self._last_index = self.track.project(
-            self._state.x, self._state.y, self._last_index
-        )
+
+        try:
+            projection, self._last_index = self.track.project(
+                self._state.x, self._state.y, self._last_index
+            )
+        except BadGuessException:
+            # Occurs when sim is restarted by pressing r, invalidating the guess
+            projection, self._last_index = self.track.project(
+                self._state.x, self._state.y, None
+            )
+
         if projection.progress < previous_progress - 0.5:
             self._lap_count += 1
 
@@ -356,9 +364,6 @@ class BeamNGTrailerEnv(gym.Env):
             "render_state": render_state,
             "lap_count": self._lap_count,
         }
-
-        def wrap_angle(angle):
-            return (angle + np.pi) % (2 * np.pi) - np.pi
 
         terminated = (
             self.track.out_of_bounds(projection.lateral_error)
@@ -400,7 +405,7 @@ class BeamNGTrailerEnv(gym.Env):
             self._debug_line_ids.append(lid)
 
     def close(self):
-        pass
+        self.bng.close()
 
 
 if __name__ == "__main__":

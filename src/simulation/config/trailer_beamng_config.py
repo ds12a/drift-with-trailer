@@ -7,7 +7,7 @@ class TrackConfig:
     width: float = 8.0
     friction_csv: str = None
     closed: bool = True
-    mu: float = 1.0 # Not used, do not use do not do not
+    mu: float = 0.0 # Not used, do not use do not do not
 
 
 @dataclass(slots=True)
