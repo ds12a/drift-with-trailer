@@ -128,7 +128,7 @@ class BeamNGTrailerEnv(gym.Env):
         logging.getLogger("beamngpy").setLevel(logging.WARNING)
 
         # Stupid
-        bng.settings.set_deterministic(speed_factor=1)
+        bng.settings.set_deterministic(speed_factor=1, steps_per_second=20)
         bng.control.queue_lua_command("settings.setValue('fpsLimitEnabled', false)")
         bng.control.queue_lua_command(
             "settings.setValue('fpsLimitBackgroundEnabled', false)"

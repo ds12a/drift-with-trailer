@@ -1,7 +1,13 @@
+import os
+
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
+
 from src.learning.datasets.trailer_data import FeatureSpec
 from src.simulation.config.trailer_beamng_config import VehicleConfig
 import jax
 import jax.numpy as jnp
+
 
 """
 Spec(s) for the BeamNG integration. Main architectural point is the realized controls
@@ -24,7 +30,7 @@ V = VehicleConfig()
 
 XS_COLS = jnp.array([0, 1, 2, 3, 4, 5])  # sh, ch, vx, vy, phi1dot, phi2dot
 XU_COLS = jnp.array([7, 8])
-U_COLS = jnp.array([8, 9])
+U_COLS = jnp.array([9, 10])
 
 X_COLS = jnp.array([0, 1, 2, 3, 4, 5, 7, 8])  # sh, ch, vx, vy, phi1dot, phi2dot, delta, accel
 IN_COLS = jnp.array([0, 1, 2, 3, 4, 5, 7, 8, 9, 10])
@@ -55,7 +61,7 @@ def fiala_dyn(r):
         return -jnp.arctan2(v_lat, jnp.maximum(jnp.abs(v_lon), eps))
     mu = 1.0  # Assumption for prior
 
-    sh, ch, v_1x, v_1y, phi_1_dot, phi_2_dot, steer_cmd, accel_cmd = r[..., X_COLS]
+    sh, ch, v_1x, v_1y, phi_1_dot, phi_2_dot, steer_cmd, accel_cmd = r
     vehicle = V
     steer_cmd = -jnp.clip(steer_cmd, -1.0, 1.0)  # BeamNG convention is opposite
     accel_cmd = jnp.clip(accel_cmd, -1.0, 1.0)

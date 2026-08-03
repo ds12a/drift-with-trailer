@@ -51,7 +51,7 @@ def build_planner_debug(all_samples, n_vis):
     return {"candidate_xy": cand}
 
 
-def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCollector, env_i, ctl_i):
+def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCollector, env_i, ctl_i, run_i, noise_stdev = 0.1, steps=2000):
     env.reset()
     observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
@@ -60,10 +60,12 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
     i = 0
     t = 0
 
+    rng = np.random.default_rng()
+
     try:
         traj = []
 
-        for i in range(2000):
+        for i in range(steps):
             # print(terminated)
             if terminated:
                 # print(np.array(traj).shape)
@@ -71,6 +73,7 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
                     data.add(np.array(traj), env_i, ctl_i, 0)
                 traj = []
                 t += 1
+                run_i += 1
                 # if t > 2:
                 #     break
                 env.reset()
@@ -124,6 +127,10 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
             i += 1
 
             action = jnp.array([-u[0], u[1]])
+            noise = rng.standard_normal(size=2) * noise_stdev
+            action += noise
+            action = jnp.clip(action, -1.0, 1.0)
+            
 
             n_viz = 10    
             # env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
@@ -139,10 +146,10 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
             # self._state.accel,
 
             print(
-                f"Iter: {i}/{2000}, terimnated: {t}, "
+                f"\rIter: {i}/{2000}, terimnated: {t}, (env, controller, run #): ( {env_i}, {ctl_i}, {run_i})"
                 f"commanded: [{action[0]:6.3f}, {action[1]:6.3f}], "
                 f"actual: [{observation[8]:6.3f}, {observation[9]:6.3f}]",
-                # end="",
+                end="",
             )
 
             if jnp.any(jnp.isnan(action)):
@@ -176,9 +183,11 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
         # )
     finally:
         if traj != []:
-            data.add(np.array(traj), env_i, ctl_i, 0)
+            data.add(np.array(traj), env_i, ctl_i, run_i)
+            run_i += 1
 
         env.close()
+        return run_i
 
 
 # Reverse/fwd configs should be automated
@@ -195,10 +204,11 @@ env = BeamNGTrailerEnv(
 
 d = DataCollector(11, 0.05)
 
-vels = [60, -60, 100, -100]
+vels = [40, -40, 60, -60, 80, -80, 100, -100, 120, -120]
 controllers = []
 
 for v in vels:
+    v /= 3.6  # to m/s
     if v > 0:
         dynamics, cost, bound, _ = gen_util_funs(
             config,
@@ -252,8 +262,15 @@ for v in vels:
         )
     controllers.append(mpc)
 
+# Prelim run with full friction
+
 for i, c in enumerate(controllers):
-    run_mpc(env, c, d, 0, c)
+    run_i = 0
+    # for j in range(4):
+    if vels[i] > 0:
+        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.3)  # run_i in case several trials of the same
+    else:
+        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.05, steps=700)  # run_i in case several trials of the same
 
 ds = d.store(STATE_FS.data_version, verbose=True)
 ds.save(Path("./experiments/exp_008_beamng/data_trial.npz"))
