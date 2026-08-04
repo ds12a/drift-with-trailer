@@ -146,8 +146,8 @@ def gen_util_funs(
 
         next_vx = vx + ax * dt
         next_vy = vy + ay * dt
-        next_phi1dot = phi1dot + phi1ddot * dt
-        next_phi2dot = phi2dot + phi2ddot * dt
+        # next_phi1dot = phi1dot + phi1ddot * dt
+        # next_phi2dot = phi2dot + phi2ddot * dt
 
         avg_vx = 0.5 * (vx + next_vx)
         avg_vy = 0.5 * (vy + next_vy)
@@ -169,7 +169,7 @@ def gen_util_funs(
 
         du = (u - old_u) / step  # Goofy
 
-        dx = jnp.array([xdot, ydot, next_phi1dot, next_phi2dot, ax, ay, phi1ddot, phi2ddot, du[0], du[1], track_vel])
+        dx = jnp.array([xdot, ydot, phi1dot, phi2dot, ax, ay, phi1ddot, phi2ddot, du[0], du[1], track_vel])
         # dx_history = (x_windows[1:] - x_windows[:-1]) / dt
         # dx_window = jnp.concatenate([dx_history, dx[None, :]], axis=0)
         # return dx_window.flatten()
