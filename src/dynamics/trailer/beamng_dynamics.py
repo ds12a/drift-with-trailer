@@ -124,7 +124,7 @@ def gen_util_funs(
             window[index],
         )
 
-    # Dyn state keeps [x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, delta_s, accel_s, delta_u, accel_u]
+    # Dyn state keeps [x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, delta_s, accel_s, delta_u, accel_u, track proj]
     def dynamics(x, u):  # passed as windows
         x_windows = x.reshape(H, 13)
         old_u = x_windows[-1][-3:-1]
@@ -173,12 +173,23 @@ def gen_util_funs(
         xpos, ypos, phi1, phi2, vx, vy, phi1dot, phi2dot, delta_s, accel_s, *_ = x_windows[-1]
         arc_len = x_windows[-1][-1]
         # pred = kin_fn(kin_in)
+        
         pred = model(model_in)[0] * y_std + y_mean
-        jax.debug.print("pred: {}", pred)
+        # pred = pred.at[:4].set(jnp.zeros(4))
+
+        # jax.debug.print("pred: {}", pred)
         pred += prior(x_windows[-1])
-        jax.debug.print("pred after prior: {}", pred)
+        # jax.debug.print("pred after prior: {}", pred)
 
         ax, ay, phi1ddot, phi2ddot, ddelta_s, daccel_s = pred
+
+        def clip_deriv(x, dx, dt):
+            x_next = x + dx * dt
+            x_next_clipped = jnp.clip(x_next, -1.0, 1.0)
+            return (x_next_clipped - x) / dt
+
+        ddelta_s = clip_deriv(delta_s, ddelta_s, dt)
+        daccel_s = clip_deriv(accel_s, daccel_s, dt)
 
         # TODO maybe keep trapezoidal consistency? doesnt really matter because its beamng
         next_vx = vx + ax * dt
@@ -228,6 +239,8 @@ def gen_util_funs(
         # dx_history = (x_windows[1:] - x_windows[:-1]) / dt
         # dx_window = jnp.concatenate([dx_history, dx[None, :]], axis=0)
         # return dx_window.flatten()
+        # jnp.set_printoptions(precision=2, suppress=True)
+        # jax.debug.print("Current state: {}", x_windows[-1] + dx * dt)
         return dx
 
     @jax.jit
@@ -293,9 +306,9 @@ def gen_util_funs(
         return jnp.nan_to_num(c, nan=1e15)
 
     def bound(u):
-        return jnp.clip(u, jnp.array([-1, -1]), jnp.array([1, 1]))
+        return jnp.clip(u, -1, 1)
 
     def bound_der(u):
-        return u
+        return jnp.clip(u, jnp.array([-0.1, -1.0]), jnp.array([-0.1, -1.0]))
 
     return dynamics, cost, bound, bound_der

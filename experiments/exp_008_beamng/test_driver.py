@@ -1,6 +1,10 @@
 import logging
 import os
 
+# JAX is stupid
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
+
 import cv2
 import numpy as np
 import time
@@ -34,7 +38,7 @@ logging.getLogger("beamngpy").setLevel(logging.WARNING)
 logging.getLogger("beamngpy").propagate = False
 
 # Reverse/fwd configs should be automated
-V_TARGET = -60 / 3.6
+V_TARGET = -20 / 3.6
 
 config = BeamNGTrailerEnvConfig(
     ".", TrackConfig(mu=1.0, width=30), bng_pickup_trailer_cfg, SimulationConfig()
@@ -95,11 +99,11 @@ else:
         config,
         reverse=False,
         v_target=V_TARGET,
-        p_weight=1e2,
+        p_weight=2e2,
         p_slow_weight=1e0,
-        s_weight=2e1,
+        s_weight=0,
         c_weight=1e1,
-        a_weight=2e2,
+        a_weight=3e2,
     )
     mpc = MPPI_Jax_Debug(
         6,
@@ -108,7 +112,7 @@ else:
         None,
         cost,
         bound,
-        jnp.diag(jnp.array([3e-3, 0.2])),
+        jnp.diag(jnp.array([2e-3, 0.2])),
         inverse_temp=0.5,
         K=500,
         step=0.05,

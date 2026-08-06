@@ -17,11 +17,12 @@ from flax import nnx
 import absl.logging
 import orbax.checkpoint as ocp  # this breaks beamng logging
 
-from src.learning.datasets.trailer_data import DataCollector
+from src.learning.datasets.trailer_data import DataCollector, DataStore
 from src.simulation.beamng_trailer_env import BeamNGTrailerEnv, VehicleState, bng_pickup_trailer_cfg
 from src.controllers.mpc.mppi_jax import MPPI_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
-from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs
+from experiments.exp_008_beamng.util_fns import gen_util_funs as sin_fn
+from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs as straight_fn
 from src.simulation.config.trailer_beamng_config import (
     BeamNGTrailerEnvConfig,
     VehicleConfig,
@@ -146,7 +147,7 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
             # self._state.accel,
 
             print(
-                f"\rIter: {i}/{2000}, terimnated: {t}, (env, controller, run #): ( {env_i}, {ctl_i}, {run_i})"
+                f"\rIter: {i}/{steps}, terimnated: {t}, (env, controller, run #): ( {env_i}, {ctl_i}, {run_i})"
                 f"commanded: [{action[0]:6.3f}, {action[1]:6.3f}], "
                 f"actual: [{observation[8]:6.3f}, {observation[9]:6.3f}]",
                 end="",
@@ -204,47 +205,54 @@ env = BeamNGTrailerEnv(
 
 d = DataCollector(11, 0.05)
 
-vels = [40, -40, 60, -60, 80, -80, 100, -100, 120, -120]
+vels = []
+# for v in range(25, 125, 10):
+#     vels.append(v)
+#     vels.append(-v)
+vels = [-20, -30, -40, -50, -60, -70, -80, -90, -100]
+
 controllers = []
 
+# Maybe k=20 will be more noisy
 for v in vels:
     v /= 3.6  # to m/s
-    if v > 0:
-        dynamics, cost, bound, _ = gen_util_funs(
-            config,
-            reverse=False,
-            v_target=v,
-            p_weight=1e2,
-            p_slow_weight=1e0,
-            c_weight=1e1,
-            s_weight=1e2,
-            a_weight=7e2,
-        )
-        mpc = MPPI_Jax_Debug(
-            6,
-            2,
-            dynamics,
-            None,
-            cost,
-            bound,
-            jnp.diag(jnp.array([3e-3, 0.2])),
-            inverse_temp=0.5,
-            K=500,
-            step=0.05,
-            T=80,
-            alpha=0.05,
-        )
+    for gen_util_funs in [straight_fn]:
+        if v > 0:
+            dynamics, cost, bound, _ = gen_util_funs(
+                config,
+                reverse=False,
+                v_target=v,
+                p_weight=1e2,
+                p_slow_weight=1e0,
+                c_weight=2e1,
+                s_weight=1e-1,
+                a_weight=7e2,
+            )
+            mpc = MPPI_Jax_Debug(
+                6,
+                2,
+                dynamics,
+                None,
+                cost,
+                bound,
+                jnp.diag(jnp.array([3e-3, 0.2])),
+                inverse_temp=0.5,
+                K=20,
+                step=0.05,
+                T=80,
+                alpha=0.05,
+            )
 
     else:
         dynamics, cost, bound, _ = gen_util_funs(
             config,
             reverse=False,
             v_target=v,
-            p_weight=1e2,
+            p_weight=2e2,
             p_slow_weight=1e0,
-            s_weight=2e1,
-            c_weight=1e0,
-            a_weight=1e2,
+            s_weight=0,
+            c_weight=1e1,
+            a_weight=3e2,
         )
         mpc = MPPI_Jax_Debug(
             6,
@@ -253,14 +261,14 @@ for v in vels:
             None,
             cost,
             bound,
-            jnp.diag(jnp.array([3e-3, 0.2])),
+            jnp.diag(jnp.array([2e-3, 0.2])),
             inverse_temp=0.5,
             K=500,
             step=0.05,
             T=55,
             alpha=0.05,
         )
-    controllers.append(mpc)
+        controllers.append(mpc)
 
 # Prelim run with full friction
 
@@ -268,9 +276,16 @@ for i, c in enumerate(controllers):
     run_i = 0
     # for j in range(4):
     if vels[i] > 0:
-        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.3)  # run_i in case several trials of the same
+        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.3, steps=4000)  # run_i in case several trials of the same
     else:
-        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.05, steps=700)  # run_i in case several trials of the same
+        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.0, steps=1000)  # run_i in case several trials of the same
 
-ds = d.store(STATE_FS.data_version, verbose=True)
-ds.save(Path("./experiments/exp_008_beamng/data_trial.npz"))
+# ds = d.store(STATE_FS.data_version, verbose=True)
+
+load = DataStore.load(Path("experiments/exp_008_beamng/data_trial2.npz"))
+print(load.data.shape)
+load.ingest(d)
+print(load.data.shape)
+load.save("experiments/exp_008_beamng/data_trial2_aug.npz")
+
+# ds.save(Path("./experiments/exp_008_beamng/data_trial2.npz"))

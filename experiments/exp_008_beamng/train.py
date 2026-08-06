@@ -1,4 +1,8 @@
+import os
 
+# JAX is stupid
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 import jax
 import jax.numpy as jnp
@@ -213,11 +217,11 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
-    NPZ_SAVE_HEAD = "data_proc_test"
+    NPZ_SAVE_HEAD = "data_proc_test2"
 
     spec = SPEC   
 
-    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial.npz"))
+    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial2_aug.npz"))
     data: DataLoader = raw.build(spec, DataLoader)
 
     wandb.init(
@@ -233,7 +237,7 @@ if __name__ == "__main__":
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
-            "run_id": "beamng-l4-128-test1"
+            "run_id": "beamng-l4-128-test2"
         },
     )
 

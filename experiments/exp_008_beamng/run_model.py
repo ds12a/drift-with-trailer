@@ -24,8 +24,13 @@ logging.getLogger("beamngpy").setLevel(logging.WARNING)
 logging.getLogger("beamngpy").propagate = False
 
 from src.simulation.beamng_trailer_env import BeamNGTrailerEnv, VehicleState, bng_pickup_trailer_cfg
+
 from src.controllers.mpc.mppi_jax import MPPI_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
+
+from src.controllers.mpc.smppi_jax import SMPPI_Jax
+from src.controllers.mpc.debug.smppi_jax_debug import SMPPI_Jax_Debug
+
 from src.learning.models.trailer_nn import TrailerModel
 from src.learning.models.beamng_trailer_spec import STATE_FS, fiala_dyn, IN_COLS
 from src.dynamics.trailer.beamng_dynamics import (
@@ -44,16 +49,16 @@ from gymnasium.wrappers import RecordVideo
 import json
 
 # Reverse/fwd configs should be automated
-V_TARGET = 60 / 3.6
+V_TARGET = 100 / 3.6
 
 spec = STATE_FS
 kin_fn = fiala_dyn
 HISTORY = spec.H
 scenario = BeamNGTrailerEnvConfig   (
-    ".", TrackConfig(mu=1.0, width=15), VehicleConfig(), SimulationConfig()
+    ".", TrackConfig(mu=1.0, width=10), bng_pickup_trailer_cfg, SimulationConfig()
 )
 
-NPZ_SAVE_HEAD = "data_proc_test"
+NPZ_SAVE_HEAD = "data_proc_test2"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 
 with open(Path(JSON_PTH), "r") as f:
@@ -67,7 +72,7 @@ ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
     ckpt.restore(
-        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test1_best",
+        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test2_best",
         state,
     ),
 )
@@ -88,7 +93,7 @@ env = BeamNGTrailerEnv(
 )
 
 if V_TARGET > 0:
-    dynamics, cost, bound, _ = res_util(
+    dynamics, cost, bound, bound_der = res_util(
         scenario,
         spec,
         kin_fn,
@@ -108,9 +113,11 @@ if V_TARGET > 0:
         None,
         cost,
         bound,
+        # bound_der,
         jnp.diag(jnp.array([3e-3, 0.2])),
+        # jnp.diag(jnp.array([1e-2, 1e-1])),
         inverse_temp=0.5,
-        K=1,
+        K=500,
         step=0.05,
         T=80,
         alpha=0.05,
@@ -143,7 +150,7 @@ else:
         inverse_temp=0.5,
         K=500,
         step=0.05,
-        T=55,
+        T=45,
         alpha=0.05,
         history=HISTORY,
     )
@@ -160,8 +167,8 @@ i = 0
 try:
     # cv2.namedWindow("sim", cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
     # Necessary, the model panics when seeing 0/default windoww
-    for _ in range(HISTORY + 1):
-        u = jnp.array([0.0, -0.01])
+    for _ in range(HISTORY + 10):
+        u = jnp.array([0.0, -0.5])
         action = np.array(u)
         observation, reward, terminated, truncated, info = env.step(action)
 
@@ -180,7 +187,7 @@ try:
         elapsed = time.perf_counter() - start
         action = np.array(u)
         observation, reward, terminated, truncated, info = env.step(action)
-        break
+        # break
         state: VehicleState = env.unwrapped._state
         arclen = env.unwrapped.track._arc_samples[env.unwrapped._last_index]
         curr = jnp.concatenate(
