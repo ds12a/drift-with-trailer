@@ -38,7 +38,7 @@ logging.getLogger("beamngpy").setLevel(logging.WARNING)
 logging.getLogger("beamngpy").propagate = False
 
 # Reverse/fwd configs should be automated
-V_TARGET = -20 / 3.6
+V_TARGET = -60 / 3.6
 
 config = BeamNGTrailerEnvConfig(
     ".", TrackConfig(mu=1.0, width=30), bng_pickup_trailer_cfg, SimulationConfig()
@@ -102,7 +102,7 @@ else:
         p_weight=2e2,
         p_slow_weight=1e0,
         s_weight=0,
-        c_weight=1e1,
+        c_weight=3e1,
         a_weight=3e2,
     )
     mpc = MPPI_Jax_Debug(

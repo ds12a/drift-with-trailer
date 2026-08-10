@@ -199,8 +199,8 @@ def gen_util_funs(
 
         avg_vx = 0.5 * (vx + next_vx)
         avg_vy = 0.5 * (vy + next_vy)
-        # avg_phi_1_dot = 0.5 * (phi1dot + next_phi1dot)
-        # avg_phi_2_dot = 0.5 * (phi2dot + next_phi2dot)
+        avg_phi_1_dot = 0.5 * (phi1dot + next_phi1dot)
+        avg_phi_2_dot = 0.5 * (phi2dot + next_phi2dot)
 
         xdot = avg_vx * jnp.cos(phi1) - avg_vy * jnp.sin(phi1)
         ydot = avg_vx * jnp.sin(phi1) + avg_vy * jnp.cos(phi1)
@@ -296,14 +296,14 @@ def gen_util_funs(
             # ) + p_weight * p_slow_weight * jnp.maximum(0, v_baseline - v_car)
 
         c = (
-            0.99**t * (1e9 * violation)
+            0.99**t * (1e7 * violation)
             + v_term
             + projection_curr.lateral_error**2 * c_weight
             + jnp.abs(hitch_angle) * a_weight
         )
 
         # jax.debug.print("cost {c}", c=c)
-        return jnp.nan_to_num(c, nan=1e15)
+        return jnp.nan_to_num(c, nan=1e8)
 
     def bound(u):
         return jnp.clip(u, -1, 1)

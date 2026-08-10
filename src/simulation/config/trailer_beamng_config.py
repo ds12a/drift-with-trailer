@@ -12,7 +12,7 @@ class TrackConfig:
 
 @dataclass(slots=True)
 class SimulationConfig:
-    dt = 0.05
+    dt: float = 0.05
     lookahead_points = 6
     lookahead_spacing_m = 10.0
 

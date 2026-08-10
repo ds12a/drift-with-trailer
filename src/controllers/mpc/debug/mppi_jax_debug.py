@@ -94,7 +94,11 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
 
     costs, bounded_noise, xhist, uhist = forward_sim(x_batch, u_batch, noise)
 
+    # jax.debug.print("{}", costs)
+
     weights = jnp.exp(-(costs - costs.min()) / inverse_temp)
+    # jax.debug.print("{}", weights)
+
     weights = weights / weights.sum()
 
     weighted_noise = jnp.sum(weights.reshape(-1, 1, 1) * bounded_noise, axis=0)

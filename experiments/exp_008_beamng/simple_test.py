@@ -220,7 +220,7 @@ def dynamics(x, u):  # passed as windows
 
 # Dim is 12
 state = jnp.zeros(12 * 4)
-state = state.at[jnp.array([4, 4+12, 4+24, 4+36])].set(3.0)
+state = state.at[jnp.array([4, 4+12, 4+24, 4+36])].set(-3.0)
 print(state[-12:])
 
 rng = np.random.default_rng()
@@ -232,7 +232,8 @@ for i in range(30):
     hitch = state[2] - state[3]
     # print("in:", jnp.array([jnp.sin(hitch), jnp.cos(hitch), *state[4:10]]))
     # print("test: ", fiala_dyn(jnp.array([jnp.sin(hitch), jnp.cos(hitch), *state[4:10]])))
-    dx = dynamics(state, jnp.array(controls[i]))
+    # dx = dynamics(state, jnp.array(controls[i]))
+    dx = dynamics(state, jnp.array([controls[i, 0], -0.1]))
     new_x = curr_x + dx * dt
     # print(state[12:].shape, new_x.shape, new_x)
     state = jnp.concatenate([state[12:], new_x])

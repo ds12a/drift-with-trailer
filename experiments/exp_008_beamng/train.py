@@ -17,6 +17,8 @@ import wandb
 
 from src.learning.models.beamng_trailer_spec import STATE_FS as SPEC, IN_COLS
 
+# from src.learning.models.beamng_model_spec import STATE_FS as SPEC, IN_COLS
+
 # RES = True
 
 # if RES:
@@ -217,7 +219,7 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
-    NPZ_SAVE_HEAD = "data_proc_test2"
+    NPZ_SAVE_HEAD = "data_proc_test4"
 
     spec = SPEC   
 
@@ -228,7 +230,7 @@ if __name__ == "__main__":
         project="Train_beamng",
         config={
             "learning_rate":1e-3,
-            "batch_size": 64,
+            "batch_size": 256,
             "H": spec.H,
             "F": spec.F,
             "data_version": spec.data_version,
@@ -237,7 +239,7 @@ if __name__ == "__main__":
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
-            "run_id": "beamng-l4-128-test2"
+            "run_id": "beamng-l4-128-test4"
         },
     )
 

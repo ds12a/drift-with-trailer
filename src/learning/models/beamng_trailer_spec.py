@@ -86,7 +86,7 @@ def fiala_dyn(r):
     # Original formulas do not work when the trailer drives backwards
     v_yf = v_1y + vehicle.lf * phi_1_dot
     v_yr = v_1y - vehicle.lr * phi_1_dot
-    v_2y_wheel = v_2y - vehicle.lr * phi_2_dot
+    v_2y_wheel = v_2y - vehicle.l2r * phi_2_dot
     alpha_f = slip_angle(v_1x * cd + v_yf * sd, -v_1x * sd + v_yf * cd)
     alpha_r = slip_angle(v_1x, v_yr)
     alpha_t = slip_angle(v_2x, v_2y_wheel)
@@ -190,15 +190,15 @@ def make_main_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="fiala"):
     @jax.jit
     @jax.vmap
     def in_fn(w):                            # (H+F, 9) -> (H*8,)
-        win_proc = (w[:H][:, IN_COLS]).reshape(-1)
-        return win_proc.at[-4].set(-win_proc[-4])
+        return (w[:H][:, IN_COLS]).reshape(-1)
+        # return win_proc.at[-4].set(-win_proc[-4])
 
     @jax.jit
     @jax.vmap
     def out_fn(w):  # (H+F, 9) -> (4,)
         k, kp = w[H - 1], w[H]
-        k = k.at[-4].set(-k[-4])
-        kp = kp.at[-4].set(-kp[-4])
+        # k = k.at[-4].set(-k[-4])
+        # kp = kp.at[-4].set(-kp[-4])
 
         prior = fiala_dyn(k[X_COLS])
 
@@ -207,5 +207,5 @@ def make_main_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="fiala"):
     return FeatureSpec(in_fn, out_fn, H, F, train_frac, split_seed, f"v2-{tag}-H{H}-dt{dt}")
 
 
-H = 4
+H = 8
 STATE_FS = make_main_spec(H=H)

@@ -134,7 +134,7 @@ def gen_util_funs(
         # Original formulas do not work when the trailer drives backwards
         v_yf = v_1y + vehicle.lf * phi_1_dot
         v_yr = v_1y - vehicle.lr * phi_1_dot
-        v_2y_wheel = v_2y - vehicle.lr * phi_2_dot
+        v_2y_wheel = v_2y - vehicle.l2r * phi_2_dot
         alpha_f = slip_angle(v_1x * cd + v_yf * sd, -v_1x * sd + v_yf * cd)
         alpha_r = slip_angle(v_1x, v_yr)
         alpha_t = slip_angle(v_2x, v_2y_wheel)
@@ -329,7 +329,7 @@ def gen_util_funs(
 
             v_yf = v_1y + vehicle.lf * phi_1_dot
             v_yr = v_1y - vehicle.lr * phi_1_dot
-            v_2y_wheel = v_2y - vehicle.lr * phi_2_dot
+            v_2y_wheel = v_2y - vehicle.l2r * phi_2_dot
             alpha_f = slip_angle(v_1x * cd + v_yf * sd, -v_1x * sd + v_yf * cd)
             alpha_r = slip_angle(v_1x, v_yr)
             alpha_t = slip_angle(v_2x, v_2y_wheel)

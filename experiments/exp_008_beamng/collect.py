@@ -209,7 +209,7 @@ vels = []
 # for v in range(25, 125, 10):
 #     vels.append(v)
 #     vels.append(-v)
-vels = [-20, -30, -40, -50, -60, -70, -80, -90, -100]
+vels = [-20, -30, -40, -50, -60, -70, -80]
 
 controllers = []
 
@@ -251,7 +251,7 @@ for v in vels:
             p_weight=2e2,
             p_slow_weight=1e0,
             s_weight=0,
-            c_weight=1e1,
+            c_weight=3e1,
             a_weight=3e2,
         )
         mpc = MPPI_Jax_Debug(
@@ -278,7 +278,7 @@ for i, c in enumerate(controllers):
     if vels[i] > 0:
         run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.3, steps=4000)  # run_i in case several trials of the same
     else:
-        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.0, steps=1000)  # run_i in case several trials of the same
+        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.0, steps=1500)  # run_i in case several trials of the same
 
 # ds = d.store(STATE_FS.data_version, verbose=True)
 

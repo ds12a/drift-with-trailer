@@ -49,16 +49,16 @@ from gymnasium.wrappers import RecordVideo
 import json
 
 # Reverse/fwd configs should be automated
-V_TARGET = 100 / 3.6
+V_TARGET = -50 / 3.6
 
 spec = STATE_FS
 kin_fn = fiala_dyn
 HISTORY = spec.H
 scenario = BeamNGTrailerEnvConfig   (
-    ".", TrackConfig(mu=1.0, width=10), bng_pickup_trailer_cfg, SimulationConfig()
+    ".", TrackConfig(mu=1.0, width=15), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
 )
 
-NPZ_SAVE_HEAD = "data_proc_test2"
+NPZ_SAVE_HEAD = "data_proc_test4"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 
 with open(Path(JSON_PTH), "r") as f:
@@ -72,7 +72,7 @@ ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
     ckpt.restore(
-        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test2_best",
+        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test4_best",
         state,
     ),
 )
@@ -136,8 +136,8 @@ else:
         p_weight=1e2,
         p_slow_weight=1e0,
         # s_weight=2e1,
-        c_weight=1e-2,
-        a_weight=1e2,
+        c_weight=5e1,
+        a_weight=2e2,
     )
     mpc = MPPI_Jax_Debug(
         13,
@@ -146,12 +146,13 @@ else:
         None,
         cost,
         bound,
-        jnp.diag(jnp.array([3e-3, 0.2])),
-        inverse_temp=0.5,
-        K=500,
+        jnp.diag(jnp.array([2e-2, 0.2])),
+        # inverse_temp=5e2,
+        inverse_temp=10,
+        K=1500,
         step=0.05,
-        T=45,
-        alpha=0.05,
+        T=55,
+        alpha=0.005,
         history=HISTORY,
     )
 
@@ -167,8 +168,8 @@ i = 0
 try:
     # cv2.namedWindow("sim", cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
     # Necessary, the model panics when seeing 0/default windoww
-    for _ in range(HISTORY + 10):
-        u = jnp.array([0.0, -0.5])
+    for _ in range(HISTORY + 20):
+        u = jnp.array([0.0, -0.35])
         action = np.array(u)
         observation, reward, terminated, truncated, info = env.step(action)
 
