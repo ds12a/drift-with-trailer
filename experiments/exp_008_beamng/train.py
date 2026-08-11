@@ -86,7 +86,7 @@ def eval_step(model, state):
     return model(state[None, ...])[0]
 
 
-CHANNELS = ("ax", "ay", "alpha1", "alpha2", "steer", "accel")
+CHANNELS = ("ax", "ay", "alpha1", "alpha2", "steer")
 
 
 class LearnedDynamics:
@@ -244,10 +244,10 @@ if __name__ == "__main__":
     )
 
     learned = LearnedDynamics(
-        TrailerModel(spec.H * len(IN_COLS), 6), data,
+        TrailerModel(spec.H * len(IN_COLS), 5), data,
         {"learning_rate": wandb.config.learning_rate},  # not wandb.config directly
         batch_size=wandb.config.batch_size,
-        iodims=(len(IN_COLS), 6)
+        iodims=(len(IN_COLS), 5)
     )
     # learned.load(Path.cwd() / "src/learning/models/trained/trailer-kin-512-best")
     try:

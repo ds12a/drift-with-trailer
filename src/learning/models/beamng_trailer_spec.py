@@ -37,11 +37,15 @@ U_COLS = jnp.array([9, 10])
 X_COLS = jnp.array([0, 1, 2, 3, 4, 5, 7, 8])  # sh, ch, vx, vy, phi1dot, phi2dot, delta, accel
 IN_COLS = jnp.array([0, 1, 2, 3, 4, 5, 7, 8, 9, 10])
 
-FD_COLS = jnp.array([2, 3, 4, 5, 7, 8])
+FD_COLS = jnp.array([2, 3, 4, 5, 7])
 
 fzr = V.mass * 9.8 * V.lf / (V.lf + V.lr) + V.trailer_mass * 9.8 * V.l2r * (
     V.lf + V.hitch_offset
 ) / ((V.lf + V.lr) * (V.l2f + V.l2r))
+
+GEAR_V0 = 0.5
+def gear_sign(vx):
+    return jnp.tanh(vx / GEAR_V0)      # smooth so MPPI sees no cost cliff at vx=0
 
 def compute_fy(alpha, cc, fz, fx, mu, gamma):
     fy_max = jnp.sqrt(jnp.maximum((mu * fz) ** 2 - gamma * fx**2, 0))
@@ -111,7 +115,7 @@ def fiala_dyn(r):
     ) + vehicle.trailer_mass * 9.8 * vehicle.l2r * (vehicle.lf + vehicle.hitch_offset) / (
         (vehicle.lf + vehicle.lr) * (vehicle.l2f + vehicle.l2r)
     )
-    commanded = throttle * vehicle.max_accel - brake * vehicle.max_brake
+    commanded = (throttle * vehicle.max_accel - brake * vehicle.max_brake) * gear_sign(v_1x)
     fxr = mu * fzr * jnp.tanh(vehicle.mass * commanded / (fzr * mu))
 
     F_1yr = -compute_fy(alpha_r, vehicle.cornering_stiffness_rear, fzr, fxr, mu, vehicle.gamma)
@@ -189,20 +193,18 @@ def make_main_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="fiala"):
 
     @jax.jit
     @jax.vmap
-    def in_fn(w):                            # (H+F, 9) -> (H*8,)
-        return (w[:H][:, IN_COLS]).reshape(-1)
-        # return win_proc.at[-4].set(-win_proc[-4])
+    def in_fn(w):                                  # (H+F, 11) -> (H*10,)
+        rows = w[:H][:, IN_COLS]
+        g = gear_sign(w[:H, 2])                    # col 2 = vx
+        rows = rows.at[:, 9].set(g * rows[:, 9])   # IN_COLS[9] == col 10 == a_cmd
+        return rows.reshape(-1)
 
     @jax.jit
     @jax.vmap
-    def out_fn(w):  # (H+F, 9) -> (4,)
+    def out_fn(w):
         k, kp = w[H - 1], w[H]
-        # k = k.at[-4].set(-k[-4])
-        # kp = kp.at[-4].set(-kp[-4])
-
         prior = fiala_dyn(k[X_COLS])
-
-        return (kp[FD_COLS] - k[FD_COLS]) / dt - jnp.concatenate([prior, jnp.array([0, 0])])
+        return (kp[FD_COLS] - k[FD_COLS]) / dt - jnp.concatenate([prior, jnp.zeros(1)])
 
     return FeatureSpec(in_fn, out_fn, H, F, train_frac, split_seed, f"v2-{tag}-H{H}-dt{dt}")
 

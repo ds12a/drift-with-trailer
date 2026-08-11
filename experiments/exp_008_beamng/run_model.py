@@ -70,7 +70,7 @@ with open(Path(JSON_PTH), "r") as f:
 
 scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
-model = TrailerModel(spec.H * len(IN_COLS), 6)
+model = TrailerModel(spec.H * len(IN_COLS), 5)
 _, state = nnx.split(model)
 ckpt = ocp.StandardCheckpointer()
 nnx.update(
@@ -105,9 +105,9 @@ fwd_weights = {
     "reverse": False,
 }
 rev_weights = {
-    "p_weight": 8e1,
+    "p_weight": 5e1,
     "p_slow_weight": 1e0,
-    "c_weight": 5e1,
+    "c_weight": 7e1,
     "a_weight": 2e2,
     "v_target": V_TARGET,
     "reverse": False,
@@ -178,12 +178,12 @@ else:
         None,
         cost,
         bound,
-        jnp.diag(jnp.array([2e-2, 0.2])),
-        inverse_temp=100,
+        jnp.diag(jnp.array([7e-2, 0.2])),
+        inverse_temp=50,
         # inverse_temp=10,
         K=1500,
         step=0.05,
-        T=65,
+        T=55,
         alpha=0.01,
         gamma=0.0,
         history=HISTORY,
@@ -272,6 +272,25 @@ try:
             [jnp.array([*astuple(state)[:10]]), jnp.array([u[0], u[1]]), jnp.array([arclen])]
         )
         history = jnp.concatenate([history[13:], curr])
+
+
+        # history = history.at[-3:-1].set(action)
+        # observation, reward, terminated, truncated, info = env.step(action)
+
+        # current_state = env.unwrapped._state
+        # curr = jnp.concatenate(
+        #     [jnp.array([*astuple(current_state)[:10]]), jnp.array([0, 0]), jnp.array([env.unwrapped.track._arc_samples[env.unwrapped._last_index]])]
+        # )
+        # history = jnp.concatenate([history[13:], curr])
+
+        # mpc_state = jnp.array(
+        #     [
+        #         *astuple(state)[:-2],
+        #         env.unwrapped.track.find_mu(state.x, state.y),
+        #         env.unwrapped.track._arc_samples[env.unwrapped._last_index],
+        #     ]
+        # )
+
         i += 1
 
         print(i, elapsed, action)

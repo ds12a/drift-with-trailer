@@ -8,9 +8,9 @@ class TrailerModel(nnx.Module):
         self.model = nnx.Sequential(
             nnx.Linear(in_dim, 128, rngs=rng),
             nnx.silu,
-            nnx.Linear(128, 128, rngs=rng),
-            nnx.silu,
             nnx.Linear(128, 64, rngs=rng),
+            nnx.silu,
+            nnx.Linear(64, 64, rngs=rng),
             nnx.silu,
             nnx.Linear(64, 64, rngs=rng),
             nnx.silu,

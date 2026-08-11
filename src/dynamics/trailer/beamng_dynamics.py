@@ -30,6 +30,7 @@ from src.learning.models.beamng_trailer_spec import (
     XU_COLS,
     U_COLS,
     FD_COLS,
+    gear_sign,
 )
 
 # TODO fix, i misinterpreted so call sites are hardcoded to 13 curreently
@@ -128,32 +129,24 @@ def gen_util_funs(
     def dynamics(x, u):  # passed as windows
         x_windows = x.reshape(H, 13)
         old_u = x_windows[-1][-3:-1]
-
         def row(w):
-            """
-            Transform from integrator/dynamics state to model state
-            """
             hitch = w[2] - w[3]
-            return jnp.stack(
-                [
-                    jnp.sin(hitch),
-                    jnp.cos(hitch),
-                    w[4],  # vx
-                    w[5],  # vy
-                    w[6],  # phi1dot
-                    w[7],  # phi2dot
-                    w[8],  # delta_s
-                    w[9],  # accel_s
-                    w[10], # delta_u
-                    w[11], # accel_u
-                ]
-            )
+            g = gear_sign(w[4])  # vx
+            return jnp.stack([
+                jnp.sin(hitch), 
+                jnp.cos(hitch),
+                w[4],  # vx
+                w[5],  # vy
+                w[6],  # phi1dot
+                w[7],  # phi2dot
+                w[8], 
+                w[9],  # delta_s, accel_s
+                w[10],  # delta_u
+                g * w[11],  # accel_u -> effective frame
+            ])
 
         def prior(w):
-            """
-            New interface should be the prior fn gets fed the whole window and slices itself
-            """
-            return jnp.concatenate([prior_fn(row(w)[:-2]), jnp.array([0, 0])])
+            return jnp.concatenate([prior_fn(row(w)[:-2]), jnp.zeros(1)])
 
         def proc(window):
             """
@@ -180,16 +173,15 @@ def gen_util_funs(
         # jax.debug.print("pred: {}", pred)
         pred += prior(x_windows[-1])
         # jax.debug.print("pred after prior: {}", pred)
-
-        ax, ay, phi1ddot, phi2ddot, ddelta_s, daccel_s = pred
+        ax, ay, phi1ddot, phi2ddot, ddelta_s = pred
 
         def clip_deriv(x, dx, dt):
-            x_next = x + dx * dt
-            x_next_clipped = jnp.clip(x_next, -1.0, 1.0)
-            return (x_next_clipped - x) / dt
+            return (jnp.clip(x + dx * dt, -1.0, 1.0) - x) / dt
 
         ddelta_s = clip_deriv(delta_s, ddelta_s, dt)
-        daccel_s = clip_deriv(accel_s, daccel_s, dt)
+        # a_s hardcode
+        accel_s_next = jnp.clip(gear_sign(vx) * u[1], -1.0, 1.0)
+        daccel_s = (accel_s_next - accel_s) / dt
 
         # TODO maybe keep trapezoidal consistency? doesnt really matter because its beamng
         next_vx = vx + ax * dt
