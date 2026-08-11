@@ -295,8 +295,8 @@ def gen_util_funs(
             #     0, v_car - v_baseline
             # ) + p_weight * p_slow_weight * jnp.maximum(0, v_baseline - v_car)
 
-        c = (
-            0.99**t * (1e7 * violation)
+        c = 0.99 ** t * (
+            (1e7 * violation)
             + v_term
             + projection_curr.lateral_error**2 * c_weight
             + jnp.abs(hitch_angle) * a_weight

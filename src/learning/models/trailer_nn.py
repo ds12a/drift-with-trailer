@@ -6,15 +6,15 @@ class TrailerModel(nnx.Module):
         rng = nnx.Rngs(1248)
 
         self.model = nnx.Sequential(
-            nnx.Linear(in_dim, 256, rngs=rng),
-            nnx.silu,
-            nnx.Linear(256, 256, rngs=rng),
-            nnx.silu,
-            nnx.Linear(256, 128, rngs=rng),
+            nnx.Linear(in_dim, 128, rngs=rng),
             nnx.silu,
             nnx.Linear(128, 128, rngs=rng),
             nnx.silu,
-            nnx.Linear(128, out_dim, rngs=rng),
+            nnx.Linear(128, 64, rngs=rng),
+            nnx.silu,
+            nnx.Linear(64, 64, rngs=rng),
+            nnx.silu,
+            nnx.Linear(64, out_dim, rngs=rng),
         )
 
     def __call__(self, x):

@@ -261,9 +261,13 @@ class BeamNGTrailerEnv(gym.Env):
         vx =  c * vx_w + s * vy_w
         vy = -s * vx_w + c * vy_w
 
-        # Actual IMU polling is slow
-        phi1dot = (phi1 - self._state.yaw_truck) / self.config.simulation.dt
-        phi2dot = (phi2 - self._state.yaw_trailer) / self.config.simulation.dt
+        # Yaw crosses 2pi
+        MAX_YAW = 5.0
+        raw = ((phi1 - self._state.yaw_truck + np.pi) % (2*np.pi) - np.pi) / self.config.simulation.dt
+        phi1dot = raw if abs(raw) < MAX_YAW else self._state.yaw_truck_rate
+
+        raw = ((phi2 - self._state.yaw_trailer + np.pi) % (2*np.pi) - np.pi) / self.config.simulation.dt
+        phi2dot = raw if abs(raw) < MAX_YAW else self._state.yaw_trailer_rate
 
         # print("steer: ", self.tractor.sensors["e1"]["steering"])
 

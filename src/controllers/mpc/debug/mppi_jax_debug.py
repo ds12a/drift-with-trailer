@@ -97,9 +97,9 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
     # jax.debug.print("{}", costs)
 
     weights = jnp.exp(-(costs - costs.min()) / inverse_temp)
-    # jax.debug.print("{}", weights)
 
     weights = weights / weights.sum()
+    # jax.debug.print("{}", weights)
 
     weighted_noise = jnp.sum(weights.reshape(-1, 1, 1) * bounded_noise, axis=0)
     u = u + weighted_noise
@@ -123,7 +123,7 @@ class MPPI_Jax_Debug:
         cv,
         inverse_temp=1,
         alpha=0.01,
-        gamma=0.01,  # TODO purge the repo of this term, it is calculated
+        gamma=0.01,
         K=20000,
         step=0.02,
         T=70,
@@ -153,7 +153,8 @@ class MPPI_Jax_Debug:
         self.bound_control = bound_control_func
         self.alpha = alpha
         self.inverse_temp = inverse_temp
-        self.gamma = (1 - alpha) * inverse_temp
+        self.gamma = gamma
+        # self.gamma = (1 - alpha) * inverse_temp
         self.K = K
         self.device = device
 

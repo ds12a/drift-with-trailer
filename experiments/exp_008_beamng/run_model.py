@@ -39,6 +39,8 @@ from src.dynamics.trailer.beamng_dynamics import (
     D_U_DIM,
     D_EXTRA_DIM,
 )
+from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs as prior_util
+
 from src.simulation.config.trailer_beamng_config import (
     BeamNGTrailerEnvConfig,
     VehicleConfig,
@@ -48,8 +50,10 @@ from src.simulation.config.trailer_beamng_config import (
 from gymnasium.wrappers import RecordVideo
 import json
 
+jnp.set_printoptions(precision=2, suppress=True)
+
 # Reverse/fwd configs should be automated
-V_TARGET = -50 / 3.6
+V_TARGET = -60 / 3.6
 
 spec = STATE_FS
 kin_fn = fiala_dyn
@@ -58,7 +62,7 @@ scenario = BeamNGTrailerEnvConfig   (
     ".", TrackConfig(mu=1.0, width=15), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
 )
 
-NPZ_SAVE_HEAD = "data_proc_test4"
+NPZ_SAVE_HEAD = "data_proc_test7"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 
 with open(Path(JSON_PTH), "r") as f:
@@ -72,7 +76,7 @@ ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
     ckpt.restore(
-        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test4_best",
+        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test7_best",
         state,
     ),
 )
@@ -92,6 +96,23 @@ env = BeamNGTrailerEnv(
     config=scenario,
 )
 
+fwd_weights = {
+    "p_weight": 1e2,
+    "p_slow_weight": 1e0,
+    "c_weight": 1e0,
+    "a_weight": 7e2,
+    "v_target": V_TARGET,
+    "reverse": False,
+}
+rev_weights = {
+    "p_weight": 8e1,
+    "p_slow_weight": 1e0,
+    "c_weight": 5e1,
+    "a_weight": 2e2,
+    "v_target": V_TARGET,
+    "reverse": False,
+}
+
 if V_TARGET > 0:
     dynamics, cost, bound, bound_der = res_util(
         scenario,
@@ -99,15 +120,33 @@ if V_TARGET > 0:
         kin_fn,
         model,
         norm_stats,
-        reverse=False,
-        v_target=V_TARGET,
-        p_weight=1e2,
-        p_slow_weight=1e0,
-        c_weight=1e0,
-        a_weight=7e2,
+        **fwd_weights,
     )
     mpc = MPPI_Jax_Debug(
         13,
+        2,
+        dynamics,
+        None,
+        cost,
+        bound,
+        # bound_der,
+         jnp.diag(jnp.array([7e-2, 0.2])),
+        inverse_temp=150,
+        # inverse_temp=10,
+        K=500,
+        step=0.05,
+        T=80,
+        alpha=0.01,
+        gamma=0.0,
+        history=HISTORY,
+    )
+    dynamics, cost, bound, bound_der = prior_util(
+        scenario,
+        s_weight=0,
+        **fwd_weights,
+    )
+    mpc_lowspeed = MPPI_Jax_Debug(
+        6,
         2,
         dynamics,
         None,
@@ -121,7 +160,6 @@ if V_TARGET > 0:
         step=0.05,
         T=80,
         alpha=0.05,
-        history=HISTORY,
     )
 
 else:
@@ -131,13 +169,7 @@ else:
         kin_fn,
         model,
         norm_stats,
-        reverse=False,
-        v_target=V_TARGET,
-        p_weight=1e2,
-        p_slow_weight=1e0,
-        # s_weight=2e1,
-        c_weight=5e1,
-        a_weight=2e2,
+        **rev_weights,
     )
     mpc = MPPI_Jax_Debug(
         13,
@@ -147,13 +179,34 @@ else:
         cost,
         bound,
         jnp.diag(jnp.array([2e-2, 0.2])),
-        # inverse_temp=5e2,
-        inverse_temp=10,
+        inverse_temp=100,
+        # inverse_temp=10,
         K=1500,
         step=0.05,
-        T=55,
-        alpha=0.005,
+        T=65,
+        alpha=0.01,
+        gamma=0.0,
         history=HISTORY,
+    )
+    dynamics, cost, bound, bound_der = prior_util(
+        scenario,
+        s_weight=0,
+        **rev_weights,
+    )
+    mpc_lowspeed = MPPI_Jax_Debug(
+        6,
+        2,
+        dynamics,
+        None,
+        cost,
+        bound,
+        jnp.diag(jnp.array([1e-2, 0.2])),
+        # inverse_temp=5e2,
+        inverse_temp=0.5,
+        K=2000,
+        step=0.05,
+        T=55,
+        alpha=0.01,
     )
 
 # fname = "rl-video" # if record_file_name is None else record_file_name
@@ -165,10 +218,11 @@ observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 history = jnp.zeros(HISTORY * 13)
 speeds, slip_angles_f, slip_angles_r, yaw_rates = [], [], [], []
 i = 0
+
 try:
     # cv2.namedWindow("sim", cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
     # Necessary, the model panics when seeing 0/default windoww
-    for _ in range(HISTORY + 20):
+    for _ in range(HISTORY):
         u = jnp.array([0.0, -0.35])
         action = np.array(u)
         observation, reward, terminated, truncated, info = env.step(action)
@@ -181,10 +235,33 @@ try:
             [jnp.array([*astuple(state)[:10]]), jnp.array([u[0], u[1]]), jnp.array([arclen])]
         )
         history = jnp.concatenate([history[13:], curr])
+
+
+        mpc_state = jnp.array(
+            [
+                *astuple(state)[:-2],
+                env.unwrapped.track.find_mu(state.x, state.y),
+                env.unwrapped.track._arc_samples[env.unwrapped._last_index],
+            ]
+        )
+
+    mpc_u_traj = mpc.last_trajectory
     for i in range(2000):
         start = time.perf_counter()
-        u, xhist, vhist = mpc.run_mpc(history)
-        u.block_until_ready()
+
+        if abs(state.vx) > 2.5:
+            mpc.last_trajectory = mpc_u_traj
+            u, xhist, vhist = mpc.run_mpc(history)
+            u.block_until_ready()
+            mpc_u_traj = mpc.last_trajectory
+        else:
+            if mpc_u_traj is not None:
+                mpc_lowspeed.last_trajectory = mpc_u_traj.at[:, 0].set(-mpc_u_traj[:, 0])
+            u, xhist, vhist = mpc_lowspeed.run_mpc(mpc_state)
+            u.block_until_ready()
+            mpc_u_traj = mpc_lowspeed.last_trajectory
+            mpc_u_traj = mpc_u_traj.at[:, 0].set(-mpc_u_traj[:, 0])
+            u = jnp.array([-u[0], u[1]])
         elapsed = time.perf_counter() - start
         action = np.array(u)
         observation, reward, terminated, truncated, info = env.step(action)
@@ -224,6 +301,15 @@ try:
         #     frame = env.render()
         #     cv2.imshow("sim", frame[..., ::-1])
         #     cv2.waitKey(1)
+
+
+        mpc_state = jnp.array(
+            [
+                *astuple(state)[:-2],
+                env.unwrapped.track.find_mu(state.x, state.y),
+                env.unwrapped.track._arc_samples[env.unwrapped._last_index],
+            ]
+        )
 
         if terminated:
             break

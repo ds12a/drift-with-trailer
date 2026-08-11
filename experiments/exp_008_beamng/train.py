@@ -219,11 +219,11 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
-    NPZ_SAVE_HEAD = "data_proc_test4"
+    NPZ_SAVE_HEAD = "data_proc_test7"
 
     spec = SPEC   
 
-    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial2_aug.npz"))
+    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial2_aug3.npz"))
     data: DataLoader = raw.build(spec, DataLoader)
 
     wandb.init(
@@ -239,7 +239,7 @@ if __name__ == "__main__":
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
-            "run_id": "beamng-l4-128-test4"
+            "run_id": "beamng-l4-128-test7"
         },
     )
 
