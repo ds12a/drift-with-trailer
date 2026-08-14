@@ -15,9 +15,9 @@ from src.learning.datasets.trailer_data import DataStore, DataLoader#, DataLoade
 from src.learning.models.trailer_nn import TrailerModel
 import wandb
 
-from src.learning.models.beamng_trailer_spec import STATE_FS as SPEC, IN_COLS
+# from src.learning.models.beamng_trailer_spec import STATE_FS as SPEC, IN_COLS
 
-# from src.learning.models.beamng_model_spec import STATE_FS as SPEC, IN_COLS
+from src.learning.models.beamng_model_spec import STATE_FS as SPEC, IN_COLS
 
 # RES = True
 
@@ -98,7 +98,12 @@ class LearnedDynamics:
         iodims=(6, 4),
         batch_size=4096,
         key=jax.random.PRNGKey(0),
+        speed_step_kph=20.0,
+        speed_freq=1,
     ):
+
+        self.speed_step_kph = speed_step_kph
+        self.speed_freq = speed_freq
         self.idim, self.odim = iodims
         self.model = model
         self.data = data
@@ -155,6 +160,9 @@ class LearnedDynamics:
                 },
                 step=e,
             )
+
+            if e % self.speed_freq == 0:
+                self.speed_rmse(step_kph=self.speed_step_kph, e=e)
 
             print(
                 f"\rEpoch {e}\t Train loss: {tl:.5f}\tTest loss: {vl:.5f}"
@@ -216,6 +224,53 @@ class LearnedDynamics:
             print(f"  mu={m:.1f}   |a|<.2 {cells[0]:>10}   .2-.6 {cells[1]:>10}   >.6 {cells[2]:>10}")
         print(f"  overall: {res.std():.3f}   (grows w/ |a| & low mu => friction floor; "
               f"flat => fit issue)")
+
+    def speed_rmse(self, step_kph=20.0, vmax_kph=100.0, vx_col=2, min_count=50, log=True, e=None):
+        """Per-channel raw RMSE stratified by signed vx (kph bins).
+
+        Separates forward/reverse and speed regime, which the scalar test loss
+        cannot: the same loss can be a good forward model with a dead reverse one.
+        """
+        spec, W = self.data.spec, np.arange(self.data.spec.H + self.data.spec.F)
+        ys = np.asarray(self.data.y_std)
+
+        edges_kph = np.arange(-vmax_kph, vmax_kph + step_kph, step_kph)
+        edges = edges_kph / 3.6
+        n_bin = len(edges) + 1                      # + under/overflow
+
+        sse = np.zeros((n_bin, self.odim))
+        cnt = np.zeros(n_bin, dtype=np.int64)
+
+        for i in range(0, len(self.data.test), 4096):
+            idx = self.data.test[i : i + 4096]
+            w = self.data.data[idx[:, None] + W]
+            x = (spec.encode_x(w) - self.data.x_mean) / self.data.x_std
+            y = (spec.encode_y(w) - self.data.y_mean) / self.data.y_std
+            r = np.asarray(self.model(x) - y) * ys                      # raw units
+            b = np.digitize(np.asarray(w[:, spec.H - 1, vx_col]), edges)
+            cnt += np.bincount(b, minlength=n_bin)
+            for c in range(self.odim):
+                sse[:, c] += np.bincount(b, weights=r[:, c] ** 2, minlength=n_bin)
+
+        rmse = np.sqrt(sse / np.maximum(cnt, 1)[:, None])
+
+        labels = (
+            [f"<{edges_kph[0]:+.0f}"]
+            + [f"{edges_kph[j-1]:+.0f}_{edges_kph[j]:+.0f}" for j in range(1, len(edges))]
+            + [f">{edges_kph[-1]:+.0f}"]
+        )
+
+        if log and wandb.run is not None:
+            payload = {}
+            for j, lab in enumerate(labels):
+                if cnt[j] < min_count:
+                    continue
+                payload[f"speed_n/{lab}"] = int(cnt[j])
+                for c, ch in zip(range(self.odim), CHANNELS):
+                    payload[f"speed_rmse/{ch}/{lab}"] = float(rmse[j, c])
+            wandb.log(payload, step=e)
+
+        return labels, rmse, cnt
 
 if __name__ == "__main__":
 

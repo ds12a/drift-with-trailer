@@ -68,6 +68,7 @@ def fiala_dyn(r):
     steer_cmd = jnp.clip(steer_cmd, -1.0, 1.0)  # BeamNG convention is opposite
     accel_cmd = jnp.clip(accel_cmd, -1.0, 1.0)
 
+    g = jnp.where(v_1x < 0.0, -1.0, 1.0)
     throttle = jnp.maximum(accel_cmd, 0.0)
     brake = -jnp.minimum(accel_cmd, 0.0)
     
@@ -111,6 +112,7 @@ def fiala_dyn(r):
     ) + vehicle.trailer_mass * 9.8 * vehicle.l2r * (vehicle.lf + vehicle.hitch_offset) / (
         (vehicle.lf + vehicle.lr) * (vehicle.l2f + vehicle.l2r)
     )
+    # commanded = g * (throttle * vehicle.max_accel - brake * vehicle.max_brake)
     commanded = throttle * vehicle.max_accel - brake * vehicle.max_brake
     fxr = mu * fzr * jnp.tanh(vehicle.mass * commanded / (fzr * mu))
 

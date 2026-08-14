@@ -178,7 +178,7 @@ def gen_util_funs(
         # pred = pred.at[:4].set(jnp.zeros(4))
 
         # jax.debug.print("pred: {}", pred)
-        pred += prior(x_windows[-1])
+        # pred += prior(x_windows[-1])
         # jax.debug.print("pred after prior: {}", pred)
 
         ax, ay, phi1ddot, phi2ddot, ddelta_s, daccel_s = pred

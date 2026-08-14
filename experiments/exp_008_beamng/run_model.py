@@ -33,6 +33,7 @@ from src.controllers.mpc.debug.smppi_jax_debug import SMPPI_Jax_Debug
 
 from src.learning.models.trailer_nn import TrailerModel
 from src.learning.models.beamng_trailer_spec import STATE_FS, fiala_dyn, IN_COLS
+from src.learning.models.beamng_model_spec import STATE_FS # Shadowing, a bit cooked
 from src.dynamics.trailer.beamng_dynamics import (
     gen_util_funs as res_util,
     D_STATE_DIM,
@@ -50,10 +51,11 @@ from src.simulation.config.trailer_beamng_config import (
 from gymnasium.wrappers import RecordVideo
 import json
 
+
 jnp.set_printoptions(precision=2, suppress=True)
 
 # Reverse/fwd configs should be automated
-V_TARGET = -60 / 3.6
+V_TARGET = -80 / 3.6
 
 spec = STATE_FS
 kin_fn = fiala_dyn
