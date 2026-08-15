@@ -100,7 +100,7 @@ class BeamNGTrailerEnv(gym.Env):
             beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
 
             if not Path.exists(beamng_home_dir):
-                beamng_home_dir = Path.home() / "Executables" / "BeamNG"
+                beamng_home_dir = Path.home() / "Executables" / "BeamNG.tech.v0.38.5.0"
 
         if beamng_user_dir is None:
             beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech/current"
@@ -146,7 +146,11 @@ class BeamNGTrailerEnv(gym.Env):
         # bng.set_steps_per_second(20)
         self.bng = bng  # For convenience
 
-        scenario = Scenario("tech_ground", "Barcelona")
+        print(list(bng.get_levels().keys()))
+
+        # tech_ground for no ice, snow_1 for ice
+        # place the zip in BeamNG_ROOT/content/levels
+        scenario = Scenario("snow_1", "Barcelona")
         self.scenario = scenario
         material = "road_asphalt_2lane"
         CHUNK_SIZE = 30
@@ -169,9 +173,7 @@ class BeamNGTrailerEnv(gym.Env):
         tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state()
 
         yaw_quat = BeamNGTrailerEnv.yaw_to_quat(yaw)
-        # tractor = Vehicle(
-        #     "car", model="scintilla", part_config="vehicles/scintilla/hitch.pc"
-        # )
+    
         self.tractor = Vehicle("car", model="pickup", part_config="vehicles/pickup/hitch.pc")
 
         scenario.add_vehicle(
@@ -492,6 +494,7 @@ if __name__ == "__main__":
 
     env = BeamNGTrailerEnv()
     env.reset()
+    env.set_track_friction(0.01, 0.01, "SNOW")
 
     env.bng.control.resume()
 
