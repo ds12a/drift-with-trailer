@@ -52,7 +52,7 @@ def build_planner_debug(all_samples, n_vis):
     return {"candidate_xy": cand}
 
 
-def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCollector, env_i, ctl_i, run_i, noise_stdev = 0.1, steps=2000):
+def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCollector, env_i, ctl_i, run_i, noise_stdev = 0.1, steps=2000, mirror=False):
     env.reset()
     observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
@@ -72,6 +72,13 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
                 # print(np.array(traj).shape)
                 if len(traj) > 0:  # Should impl larger cutoff
                     data.add(np.array(traj), env_i, ctl_i, 0)
+
+                    if mirror:
+                        mirrored = np.array(traj)
+                        mirrored[:, [0, 3, 4, 5, 7, 9]] *= -1   
+                        data.add(mirrored, env_i, ctl_i, 0)
+
+
                 traj = []
                 t += 1
                 run_i += 1
@@ -147,10 +154,10 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
             # self._state.accel,
 
             print(
-                f"\rIter: {i}/{steps}, terimnated: {t}, (env, controller, run #): ( {env_i}, {ctl_i}, {run_i})"
+                f"Iter: {i}/{steps}, terimnated: {t}, (env, controller, run #): ( {env_i}, {ctl_i}, {run_i})"
                 f"commanded: [{action[0]:6.3f}, {action[1]:6.3f}], "
                 f"actual: [{observation[8]:6.3f}, {observation[9]:6.3f}]",
-                end="",
+                # end="",
             )
 
             if jnp.any(jnp.isnan(action)):
@@ -159,14 +166,14 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
 
             traj.append(
                 np.array([
-                    np.sin(observation[2] - observation[3]),
+                    np.sin(observation[2] - observation[3]), # 0, 3, 4, 5, 7
                     np.cos(observation[2] - observation[3]),
                     observation[4],
-                    observation[5],
-                    observation[6],
-                    observation[7],
+                    observation[5], #
+                    observation[6], #
+                    observation[7], #
                     env.unwrapped.track.find_mu(state.x, state.y),
-                    observation[8],
+                    observation[8],#
                     observation[9],
                     action[0],
                     action[1],
@@ -185,6 +192,12 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
     finally:
         if traj != []:
             data.add(np.array(traj), env_i, ctl_i, run_i)
+
+            if mirror:
+                mirrored = np.array(traj) 
+                mirrored[:, [0, 3, 4, 5, 7, 9]] *= -1
+                data.add(mirrored, env_i, ctl_i, 0)   
+              
             run_i += 1
 
         env.close()
@@ -209,7 +222,7 @@ vels = []
 # for v in range(25, 125, 10):
 #     vels.append(v)
 #     vels.append(-v)
-vels = [-20, -30, -40, -50, -60, -70, -80]
+vels = [-10, -20, -30, -40, -50, -60, -70, -80] 
 
 controllers = []
 
@@ -273,16 +286,19 @@ for v in vels:
 # Prelim run with full friction
 
 for i, c in enumerate(controllers):
+
     run_i = 0
     # for j in range(4):
     if vels[i] > 0:
         run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.3, steps=4000)  # run_i in case several trials of the same
     else:
-        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.0, steps=1500)  # run_i in case several trials of the same
+        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.0, steps=1500, mirrored=True)  # run_i in case several trials of the same
 
 # ds = d.store(STATE_FS.data_version, verbose=True)
 
-load = DataStore.load(Path("experiments/exp_008_beamng/data_trial2.npz"))
+
+
+load = DataStore.load(Path("experiments/exp_008_beamng/data_trial2_aug.npz"))
 print(load.data.shape)
 load.ingest(d)
 print(load.data.shape)

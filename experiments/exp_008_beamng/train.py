@@ -278,7 +278,7 @@ if __name__ == "__main__":
 
     spec = SPEC   
 
-    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial2_aug3.npz"))
+    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial2_aug.npz"))
     data: DataLoader = raw.build(spec, DataLoader)
 
     wandb.init(

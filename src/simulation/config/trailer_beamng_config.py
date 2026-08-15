@@ -5,7 +5,7 @@ import numpy as np
 class TrackConfig:
     csv: str = "src/simulation/assets/tracks/ks_barcelona_layout_gp_centerline.csv"
     width: float = 8.0
-    friction_csv: str = None
+    friction_csv: str = "src/simulation/assets/tracks/barcelona_ice.csv"
     closed: bool = True
     mu: float = 1.0 # Not used, do not use do not do not
 
@@ -15,6 +15,7 @@ class SimulationConfig:
     dt: float = 0.05
     lookahead_points = 6
     lookahead_spacing_m = 10.0
+    random_start = False
 
 
 @dataclass(slots=True)
