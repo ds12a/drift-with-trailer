@@ -274,18 +274,18 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
-    NPZ_SAVE_HEAD = "data_proc_test7"
+    NPZ_SAVE_HEAD = "data_proc_test8"
 
     spec = SPEC   
 
-    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial2_aug.npz"))
+    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial3.npz"))
     data: DataLoader = raw.build(spec, DataLoader)
 
     wandb.init(
         project="Train_beamng",
         config={
             "learning_rate":1e-3,
-            "batch_size": 256,
+            "batch_size": 1024,
             "H": spec.H,
             "F": spec.F,
             "data_version": spec.data_version,
@@ -294,7 +294,7 @@ if __name__ == "__main__":
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
-            "run_id": "beamng-l4-128-test7"
+            "run_id": "beamng-l4-128-test8"
         },
     )
 
@@ -310,5 +310,5 @@ if __name__ == "__main__":
     # learned.save()
     finally:
         learned.ax_floor()
-        data.save(Path(f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}.npz"))
+        # data.save(Path(f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}.npz"))
         data.norm_to_json(Path(f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"))

@@ -55,16 +55,16 @@ import json
 jnp.set_printoptions(precision=2, suppress=True)
 
 # Reverse/fwd configs should be automated
-V_TARGET = -80 / 3.6
+V_TARGET = -40 / 3.6
 
 spec = STATE_FS
 kin_fn = fiala_dyn
 HISTORY = spec.H
 scenario = BeamNGTrailerEnvConfig   (
-    ".", TrackConfig(mu=1.0, width=15), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
+    ".", TrackConfig(mu=0.5, width=25), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
 )
 
-NPZ_SAVE_HEAD = "data_proc_test7"
+NPZ_SAVE_HEAD = "data_proc_test8"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 
 with open(Path(JSON_PTH), "r") as f:
@@ -78,7 +78,7 @@ ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
     ckpt.restore(
-        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test7_best",
+        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test8_best",
         state,
     ),
 )
@@ -107,10 +107,10 @@ fwd_weights = {
     "reverse": False,
 }
 rev_weights = {
-    "p_weight": 8e1,
+    "p_weight": 5e1,
     "p_slow_weight": 1e0,
     "c_weight": 5e1,
-    "a_weight": 2e2,
+    "a_weight": 1e2,
     "v_target": V_TARGET,
     "reverse": False,
 }
@@ -251,19 +251,23 @@ try:
     for i in range(2000):
         start = time.perf_counter()
 
-        if abs(state.vx) > 2.5:
-            mpc.last_trajectory = mpc_u_traj
-            u, xhist, vhist = mpc.run_mpc(history)
-            u.block_until_ready()
-            mpc_u_traj = mpc.last_trajectory
-        else:
-            if mpc_u_traj is not None:
-                mpc_lowspeed.last_trajectory = mpc_u_traj.at[:, 0].set(-mpc_u_traj[:, 0])
-            u, xhist, vhist = mpc_lowspeed.run_mpc(mpc_state)
-            u.block_until_ready()
-            mpc_u_traj = mpc_lowspeed.last_trajectory
-            mpc_u_traj = mpc_u_traj.at[:, 0].set(-mpc_u_traj[:, 0])
-            u = jnp.array([-u[0], u[1]])
+        # if abs(state.vx) > 2.5:
+        #     mpc.last_trajectory = mpc_u_traj
+        #     u, xhist, vhist = mpc.run_mpc(history)
+        #     u.block_until_ready()
+        #     mpc_u_traj = mpc.last_trajectory
+        # else:
+        #     if mpc_u_traj is not None:
+        #         mpc_lowspeed.last_trajectory = mpc_u_traj.at[:, 0].set(-mpc_u_traj[:, 0])
+        #     u, xhist, vhist = mpc_lowspeed.run_mpc(mpc_state)
+        #     u.block_until_ready()
+        #     mpc_u_traj = mpc_lowspeed.last_trajectory
+        #     mpc_u_traj = mpc_u_traj.at[:, 0].set(-mpc_u_traj[:, 0])
+        #     u = jnp.array([-u[0], u[1]])
+
+        u, xhist, vhist = mpc.run_mpc(history)
+        u.block_until_ready()
+
         elapsed = time.perf_counter() - start
         action = np.array(u)
         observation, reward, terminated, truncated, info = env.step(action)

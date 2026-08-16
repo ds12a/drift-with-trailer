@@ -1,5 +1,13 @@
-from __future__ import annotations
-from concurrent.futures import ThreadPoolExecutor
+# TODO need to change a bit for __main__ driver, this shouldnt be here
+import os
+
+# JAX is stupid
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
+
+
+# from __future__ import annotations
+# from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import time
@@ -118,7 +126,7 @@ class BeamNGTrailerEnv(gym.Env):
             ]
         )
 
-        self.spawn_offset = np.array([0, 0, 0.5])
+        self.spawn_offset = np.array([0, 0, 0.325])
 
         # Process to make it lighter on BeamNG engine
         def decimate_by_arclength(xy, min_spacing=5.0):
@@ -262,8 +270,10 @@ class BeamNGTrailerEnv(gym.Env):
             yaw += (np.random.random() - 0.5) * 2 * 0.1
 
         tangent = np.array([np.cos(yaw), np.sin(yaw), 0])
-        l = 7.5  # possibly questionable? spawns too close
-        trailer_xyz = tractor_xyz - tangent * l
+        normal = np.array([np.sin(yaw), -np.cos(yaw), 0])
+        l = 8.0
+        trailer_off = -0.175  # Trailer seems a bit off on spawn pose, probably xyz calc from random node rather than center
+        trailer_xyz = tractor_xyz - tangent * l + normal * trailer_off
         return tractor_xyz, trailer_xyz, yaw
 
     def _initial_env_state(self) -> VehicleState:
@@ -371,6 +381,7 @@ class BeamNGTrailerEnv(gym.Env):
             pos=tuple(trailer_xyz + self.spawn_offset),
             rot_quat=yaw_quat,
         )
+        # time.sleep(100000)
 
         self._state.vx = 0.0
         self._state.vy = 0.0
@@ -381,6 +392,11 @@ class BeamNGTrailerEnv(gym.Env):
         _, self._last_index = self.track.project(self._state.x, self._state.y, None)
 
         self.bng.step(10)
+
+        # for i in range(10):
+        #     self.bng.step(1)
+        #     time.sleep(0.1)
+
         self.tractor.couplers.attach()
 
         if np.abs(initial_velocity) > 1e-3:
@@ -490,10 +506,18 @@ if __name__ == "__main__":
     # bng = BeamNGpy('localhost', 25252)
     # bng.open()
 
-    env = BeamNGTrailerEnv()
+    scenario = BeamNGTrailerEnvConfig   (
+    ".", TrackConfig(mu=1.0, width=25), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
+)
+
+    env = BeamNGTrailerEnv(scenario)
     env.reset()
 
-    env.bng.control.resume()
+    while True:
+        env.step(np.array([0, 0]))
+        time.sleep(0.2)
+
+    # env.bng.control.resume()
 
     # obs, reward, term, *_ = env.step(np.array([0, 0]))
     # print(obs, term)
