@@ -86,6 +86,7 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
                 #     break
                 env.reset()
                 mpc.reset()
+                break
                 observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
             start = time.perf_counter()
@@ -154,10 +155,10 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
             # self._state.accel,
 
             print(
-                f"Iter: {i}/{steps}, terimnated: {t}, (env, controller, run #): ( {env_i}, {ctl_i}, {run_i})"
+                f"\rIter: {i}/{steps}, terimnated: {t}, (env, controller, run #): ( {env_i}, {ctl_i}, {run_i})"
                 f"commanded: [{action[0]:6.3f}, {action[1]:6.3f}], "
                 f"actual: [{observation[8]:6.3f}, {observation[9]:6.3f}]",
-                # end="",
+                end="",
             )
 
             if jnp.any(jnp.isnan(action)):
@@ -189,6 +190,10 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
         #     f"Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, "
         #     f"Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
         # )
+    except KeyboardInterrupt:
+        pass
+    except:
+        raise
     finally:
         if traj != []:
             data.add(np.array(traj), env_i, ctl_i, run_i)
@@ -201,45 +206,83 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCol
             run_i += 1
 
         env.close()
-        return run_i
+    return run_i
 
 
 # Reverse/fwd configs should be automated
 
-config = BeamNGTrailerEnvConfig(
-    ".", TrackConfig(mu=1.0, width=30), bng_pickup_trailer_cfg, SimulationConfig()
-)
+# config = BeamNGTrailerEnvConfig(
+#     ".", TrackConfig(mu=1.0, width=30), bng_pickup_trailer_cfg, SimulationConfig()
+# )
 
 # config.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
-env = BeamNGTrailerEnv(
-    config=config,
-)
+# env = BeamNGTrailerEnv(
+#     config=config,
+# )
 
 d = DataCollector(11, 0.05)
 
 vels = []
-# for v in range(25, 125, 10):
-#     vels.append(v)
-#     vels.append(-v)
-vels = [-10, -20, -30, -40, -50, -60, -70, -80] 
+for v in range(20, 100, 10):
+    vels.append(v)
+    vels.append(-v)
+# vels = [-20, -30, -40, -50, -60, -70, -80] 
 
 controllers = []
 
+
+
+fwd_weights = {
+    "p_weight": 1e2,
+    "p_slow_weight": 1e0,
+    "c_weight": 1e0,
+    "a_weight": 7e2,
+    "reverse": False,
+}
+rev_weights = {
+    "p_weight": 2e1,
+    "p_slow_weight": 1e0,
+    "c_weight": 5e1,
+    "a_weight": 2e2,
+    "reverse": False,
+}
+
+
 # Maybe k=20 will be more noisy
-for v in vels:
-    v /= 3.6  # to m/s
-    for gen_util_funs in [straight_fn]:
-        if v > 0:
+
+# Prelim run with full friction
+
+mus = [0.2, 0.4, 0.6, 0.8, 1.0]
+for env_i, m in enumerate(mus):
+
+    controllers = []
+
+    config = BeamNGTrailerEnvConfig(
+        ".", TrackConfig(mu=m, width=30), bng_pickup_trailer_cfg, SimulationConfig()
+    )
+
+    # config.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
+
+    env = BeamNGTrailerEnv(
+        config=config,
+    )
+
+    for V_TARGET in vels:
+        V_TARGET /= 3.6  # to m/s
+        # for gen_util_funs in [straight_fn]:
+
+        if V_TARGET > 0:
+            gen_util_funs = sin_fn
+        else:
+            gen_util_funs = straight_fn
+            
+        if V_TARGET > 0:
             dynamics, cost, bound, _ = gen_util_funs(
                 config,
-                reverse=False,
-                v_target=v,
-                p_weight=1e2,
-                p_slow_weight=1e0,
-                c_weight=2e1,
-                s_weight=1e-1,
-                a_weight=7e2,
+                s_weight=0,
+                v_target=V_TARGET,
+                **fwd_weights,
             )
             mpc = MPPI_Jax_Debug(
                 6,
@@ -248,60 +291,57 @@ for v in vels:
                 None,
                 cost,
                 bound,
+                # bound_der,
                 jnp.diag(jnp.array([3e-3, 0.2])),
+                # jnp.diag(jnp.array([1e-2, 1e-1])),
                 inverse_temp=0.5,
-                K=20,
+                K=500,
                 step=0.05,
                 T=80,
                 alpha=0.05,
             )
 
-    else:
-        dynamics, cost, bound, _ = gen_util_funs(
-            config,
-            reverse=False,
-            v_target=v,
-            p_weight=2e2,
-            p_slow_weight=1e0,
-            s_weight=0,
-            c_weight=3e1,
-            a_weight=3e2,
-        )
-        mpc = MPPI_Jax_Debug(
-            6,
-            2,
-            dynamics,
-            None,
-            cost,
-            bound,
-            jnp.diag(jnp.array([2e-3, 0.2])),
-            inverse_temp=0.5,
-            K=500,
-            step=0.05,
-            T=55,
-            alpha=0.05,
-        )
+        else:
+            dynamics, cost, bound, _ = gen_util_funs(
+                config,
+                s_weight=0,
+                v_target=V_TARGET,
+                **rev_weights,
+            )
+            mpc = MPPI_Jax_Debug(
+                6,
+                2,
+                dynamics,
+                None,
+                cost,
+                bound,
+                jnp.diag(jnp.array([1e-2, 0.2])),
+                # inverse_temp=5e2,
+                inverse_temp=0.5,
+                K=2000,
+                step=0.05,
+                T=55,
+                alpha=0.01,
+            )
         controllers.append(mpc)
 
-# Prelim run with full friction
+    for i, c in enumerate(controllers):
 
-for i, c in enumerate(controllers):
+        run_i = 0
+        # for j in range(4):
+        if vels[i] > 0:
+            run_i = run_mpc(env, c, d, env_i, i, run_i, noise_stdev=0.3, steps=2000)  # run_i in case several trials of the same
+        else:
+            run_i = run_mpc(env, c, d, env_i, i, run_i, noise_stdev=0.0, steps=1000, mirror=True)  # run_i in case several trials of the same
 
-    run_i = 0
-    # for j in range(4):
-    if vels[i] > 0:
-        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.3, steps=4000)  # run_i in case several trials of the same
-    else:
-        run_i = run_mpc(env, c, d, 0, i, run_i, noise_stdev=0.0, steps=1500, mirrored=True)  # run_i in case several trials of the same
-
-# ds = d.store(STATE_FS.data_version, verbose=True)
+ds = d.store(STATE_FS.data_version, verbose=True)
 
 
 
-load = DataStore.load(Path("experiments/exp_008_beamng/data_trial2_aug.npz"))
-print(load.data.shape)
-load.ingest(d)
-print(load.data.shape)
-load.save("experiments/exp_008_beamng/data_trial2_aug.npz")
+# load = DataStore.load(Path("experiments/exp_008_beamng/data_trial2_aug.npz"))
+# print(load.data.shape)
+# load.ingest(d)
+# print(load.data.shape)
+# load.save("experiments/exp_008_beamng/data_trial2_aug.npz")
 
-# ds.save(Path("./experiments/exp_008_beamng/data_trial2.npz"))
+ds.save(Path("./experiments/exp_008_beamng/data_trial3.npz"))

@@ -41,10 +41,10 @@ logging.getLogger("beamngpy").propagate = False
 V_TARGET = -60 / 3.6
 
 config = BeamNGTrailerEnvConfig(
-    ".", TrackConfig(mu=1.0, width=30), bng_pickup_trailer_cfg, SimulationConfig()
+    ".", TrackConfig(mu=0.5, width=30), bng_pickup_trailer_cfg, SimulationConfig()
 )
 
-config.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
+# config.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.25"
 
 def build_planner_debug(all_samples, n_vis):
@@ -68,16 +68,29 @@ h = logging.StreamHandler()
 h.setLevel(logging.WARNING)
 bng_log.addHandler(h)
 
+fwd_weights = {
+    "p_weight": 1e2,
+    "p_slow_weight": 1e0,
+    "c_weight": 1e0,
+    "a_weight": 7e2,
+    "v_target": V_TARGET,
+    "reverse": False,
+}
+rev_weights = {
+    "p_weight": 2e1,
+    "p_slow_weight": 1e0,
+    "c_weight": 5e1,
+    "a_weight": 2e2,
+    "v_target": V_TARGET,
+    "reverse": False,
+}
+
+
 if V_TARGET > 0:
     dynamics, cost, bound, _ = gen_util_funs(
         config,
-        reverse=False,
-        v_target=V_TARGET,
-        p_weight=1e2,
-        p_slow_weight=1e0,
-        c_weight=1e0,
-        s_weight=1e2,
-        a_weight=7e2,
+        s_weight=0,
+        **fwd_weights,
     )
     mpc = MPPI_Jax_Debug(
         6,
@@ -86,7 +99,9 @@ if V_TARGET > 0:
         None,
         cost,
         bound,
+        # bound_der,
         jnp.diag(jnp.array([3e-3, 0.2])),
+        # jnp.diag(jnp.array([1e-2, 1e-1])),
         inverse_temp=0.5,
         K=500,
         step=0.05,
@@ -97,13 +112,8 @@ if V_TARGET > 0:
 else:
     dynamics, cost, bound, _ = gen_util_funs(
         config,
-        reverse=False,
-        v_target=V_TARGET,
-        p_weight=2e2,
-        p_slow_weight=1e0,
         s_weight=0,
-        c_weight=3e1,
-        a_weight=3e2,
+        **rev_weights,
     )
     mpc = MPPI_Jax_Debug(
         6,
@@ -112,12 +122,13 @@ else:
         None,
         cost,
         bound,
-        jnp.diag(jnp.array([2e-3, 0.2])),
+        jnp.diag(jnp.array([1e-2, 0.2])),
+        # inverse_temp=5e2,
         inverse_temp=0.5,
-        K=500,
+        K=2000,
         step=0.05,
         T=55,
-        alpha=0.05,
+        alpha=0.01,
     )
 
 # fname = "rl-video" # if record_file_name is None else record_file_name
