@@ -38,7 +38,7 @@ logging.getLogger("beamngpy").setLevel(logging.WARNING)
 logging.getLogger("beamngpy").propagate = False
 
 # Reverse/fwd configs should be automated
-V_TARGET = -40 / 3.6
+V_TARGET = -60 / 3.6
 
 config = BeamNGTrailerEnvConfig(
     ".", TrackConfig(mu=0.5, width=30), bng_pickup_trailer_cfg, SimulationConfig()

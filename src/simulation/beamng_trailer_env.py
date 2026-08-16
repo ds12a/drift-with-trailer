@@ -108,7 +108,7 @@ class BeamNGTrailerEnv(gym.Env):
             beamng_home_dir = Path.home() / "BeamNG.tech.v0.38.5.0"
 
             if not Path.exists(beamng_home_dir):
-                beamng_home_dir = Path.home() / "Executables" / "BeamNG"
+                beamng_home_dir = Path.home() / "Executables" / "BeamNG.tech.v0.38.5.0"
 
         if beamng_user_dir is None:
             beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech/current"
@@ -121,7 +121,7 @@ class BeamNGTrailerEnv(gym.Env):
         centerline = np.hstack(
             [
                 self.track.centerline,
-                np.zeros((self.track.centerline.shape[0], 1)),
+                np.full((self.track.centerline.shape[0], 1), 20),
                 np.ones((self.track.centerline.shape[0], 1)) * self.track.width,
             ]
         )
@@ -154,7 +154,11 @@ class BeamNGTrailerEnv(gym.Env):
         # bng.set_steps_per_second(20)
         self.bng = bng  # For convenience
 
-        scenario = Scenario("tech_ground", "Barcelona")
+        print(list(bng.get_levels().keys()))
+
+        # tech_ground for no ice, snow_1 for ice
+        # place the zip in BeamNG_ROOT/content/levels
+        scenario = Scenario("slope_1", "Barcelona")
         self.scenario = scenario
         material = "road_asphalt_2lane"
         CHUNK_SIZE = 30
@@ -164,7 +168,7 @@ class BeamNGTrailerEnv(gym.Env):
             seg = centerline[start : start + CHUNK_SIZE + 1]
             if len(seg) < 2:
                 continue
-            r = Road(material, rid=f"segment_{k}", looped=False, interpolate=False)
+            r = Road(material, rid=f"segment_{k}", looped=False, interpolate=False, over_objects=True)
             r.add_nodes(*(seg.tolist()))
             roads.append(r)
             scenario.add_road(r)
@@ -177,15 +181,14 @@ class BeamNGTrailerEnv(gym.Env):
         tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state()
 
         yaw_quat = BeamNGTrailerEnv.yaw_to_quat(yaw)
-        # tractor = Vehicle(
-        #     "car", model="scintilla", part_config="vehicles/scintilla/hitch.pc"
-        # )
+    
         self.tractor = Vehicle("car", model="pickup", part_config="vehicles/pickup/hitch.pc")
 
         scenario.add_vehicle(
             self.tractor,
             pos=tractor_xyz + self.spawn_offset,
             rot_quat=yaw_quat,
+            cling=True
         )
 
         self.trailer = Vehicle("trailer", model="cargotrailer")
@@ -194,6 +197,7 @@ class BeamNGTrailerEnv(gym.Env):
             self.trailer,
             pos=trailer_xyz + self.spawn_offset,
             rot_quat=yaw_quat,
+            cling=True
         )
 
         scenario.make(bng)
@@ -230,6 +234,22 @@ class BeamNGTrailerEnv(gym.Env):
             dtype=np.float32,
         )
 
+    def _query_terrain_height(self, x: float, y: float, ray_top=1000.0, ray_bottom=-1000.0) -> float:
+        lua = f"""
+        local hit = Engine.castRay(
+            vec3({x}, {y}, {ray_top}),
+            vec3({x}, {y}, {ray_bottom}),
+            true, false
+        )
+        if hit == nil then
+            return 0
+        end
+            
+        return hit.pt.z
+        """
+        resp = self.bng.control.queue_lua_command(lua, response=True)
+        return float(resp)
+
     def set_track_friction(
         self, static_mu: float, sliding_mu: float, groundmodel: str = "ASPHALT_OLD"
     ):
@@ -262,7 +282,11 @@ class BeamNGTrailerEnv(gym.Env):
         centerline = self.track.centerline
         index = np.random.randint(0, len(centerline)) if self.config.simulation.random_start else 0
 
-        tractor_xyz = np.concat([centerline[index], np.array([0.0])], axis=0)
+        spawn_z = self._query_terrain_height(*centerline[index])
+
+        print("terrain at height", spawn_z)
+
+        tractor_xyz = np.concat([centerline[index], np.array([spawn_z])], axis=0)
         dx, dy = (centerline[(index + 1) % len(centerline)] - centerline[index])[:2]
         yaw = np.arctan2(dy, dx)
 
@@ -513,11 +537,7 @@ if __name__ == "__main__":
     env = BeamNGTrailerEnv(scenario)
     env.reset()
 
-    while True:
-        env.step(np.array([0, 0]))
-        time.sleep(0.2)
-
-    # env.bng.control.resume()
+    env.bng.control.resume()
 
     # obs, reward, term, *_ = env.step(np.array([0, 0]))
     # print(obs, term)
