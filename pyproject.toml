@@ -25,6 +25,9 @@ dependencies = [
     "opencv-python",
     "moviepy",
     # "torch",
+    "wandb>=0.28.1",
+    "typing-extensions>=4.15.0",
+    "beamngpy>=1.35.1",
 ]
 
 [dependency-groups]

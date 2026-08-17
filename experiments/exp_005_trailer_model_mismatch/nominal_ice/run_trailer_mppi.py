@@ -72,10 +72,10 @@ if __name__ == "__main__":
         ctl_args,
         ctl_kwargs,
         cost_kwargs,
-        record=True,
+        record=False,
         debug=True,
         quiet=False,
         benchmark=False,
-        headless=False,
+        headless=True,
         env_kwargs=env_kwargs,
     )

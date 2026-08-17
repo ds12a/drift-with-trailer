@@ -7,6 +7,9 @@ from src.utils.track import TrackModel
 
 Array = jax.Array
 
+"""
+Scratch class for easier modification for data collection
+"""
 
 class TrackProjection(NamedTuple):
     progress: Array
@@ -16,6 +19,7 @@ class TrackProjection(NamedTuple):
     heading: Array
     lateral_error: Array
     curvature: Array
+
 
 
 def gen_util_funs(
@@ -219,13 +223,15 @@ def gen_util_funs(
 
         next_vx = v_1x + v_1x_dot * dt
         next_vy = v_1y + v_1y_dot * dt
-        # next_phi_1_dot = phi_1_dot + phi_1_ddot * dt
-        # next_phi_2_dot = phi_2_dot + phi_2_ddot * dt
+        next_phi_1_dot = phi_1_dot + phi_1_ddot * dt
+        next_phi_2_dot = phi_2_dot + phi_2_ddot * dt
 
         # Trapezoidal (avg) approximations
         avg_vx = 0.5 * (v_1x + next_vx)
         avg_vy = 0.5 * (v_1y + next_vy)
-    
+        avg_phi_1_dot = 0.5 * (phi_1_dot + next_phi_1_dot)
+        avg_phi_2_dot = 0.5 * (phi_2_dot + next_phi_2_dot)
+
         # Change of frame
         xdot = avg_vx * jnp.cos(phi_1) - avg_vy * jnp.sin(phi_1)
         ydot = avg_vx * jnp.sin(phi_1) + avg_vy * jnp.cos(phi_1)
@@ -370,7 +376,7 @@ def gen_util_funs(
             0.99**t * (1e12 * violation)
             + v_term
             + combined_traction_penalty(x, u) * s_weight
-            + projection_curr.lateral_error**2 * c_weight
+            + (projection_curr.lateral_error - params.track.width * (3 / 8) * jnp.sin(projection_curr.arc_length / params.track.width))**2 * c_weight # Sinusoidal tracking
             + jnp.abs(hitch_angle) * a_weight
         )
 

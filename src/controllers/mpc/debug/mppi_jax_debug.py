@@ -8,13 +8,16 @@ import jax.numpy as jnp
 import jax
 from jax.typing import ArrayLike
 import numpy as np
-import torch
+
+# import torch
 import functools
 
 
 # @jax.jit
-@functools.partial(jax.jit, static_argnames=["cost", "term_cost", "bound_control", "dynamics"])
-@functools.partial(jax.vmap, in_axes=(0, 0, 0, None, None, None, None, None, None, None))
+@functools.partial(
+    jax.jit, static_argnames=["cost", "term_cost", "bound_control", "dynamics", "history"]
+)
+@functools.partial(jax.vmap, in_axes=(0, 0, 0, None, None, None, None, None, None, None, None))
 def rollout(
     x: ArrayLike,
     u: ArrayLike,
@@ -26,6 +29,7 @@ def rollout(
     bound_control,
     dynamics,
     step,
+    history=None,
 ) -> float:
     """
     Uses Euler's method to integrate the dynamics
@@ -47,19 +51,26 @@ def rollout(
         x, S, i = carry
         u, v, bounded_noise = control
 
-        new_x = x + dynamics(x, v) * step
+        if history is not None:
+            step_dim = x.shape[0] // history
+            curr_x = x[-step_dim:]
+            dx = dynamics(x, v)
+            new_curr_x = curr_x + dx * step
+            new_x = jnp.concatenate([x[step_dim:], new_curr_x])
+        else:
+            new_x = x + dynamics(x, v) * step
+
         new_S = S + cost(new_x, v, i) + gamma * jnp.einsum("n,nm,m->", u, inv_cv, bounded_noise)
         new_i = i + 1
+        # jax.debug.print("x: {}", x[-step_dim:])
 
-        new_carry = new_x, new_S, new_i
+        return (new_x, new_S, new_i), (new_x, new_S, v)
 
-        return new_carry, (new_x, new_S)
-
-    (x, S, _), (xhist, _) = jax.lax.scan(step_dynamics, (x, 0, 0), (u, v, bounded_noise))
+    (x, S, _), (xhist, _, vhist) = jax.lax.scan(step_dynamics, (x, 0, 0), (u, v, bounded_noise))
 
     if term_cost:
         S += term_cost(x, u[-1])
-    return S, xhist
+    return S, xhist, vhist
 
 
 @functools.partial(
@@ -81,7 +92,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
     key, subkey = jax.random.split(key)
     noise = jax.random.normal(subkey, u_batch.shape) * jnp.sqrt(jnp.diag(cv))
 
-    costs, bounded_noise, xhist = forward_sim(x_batch, u_batch, noise)
+    costs, bounded_noise, xhist, uhist = forward_sim(x_batch, u_batch, noise)
 
     weights = jnp.exp(-(costs - costs.min()) / inverse_temp)
     weights = weights / weights.sum()
@@ -89,7 +100,7 @@ def mpc_step(x, last_trajectory, u_d, key, K, T, cv, inverse_temp, forward_sim):
     weighted_noise = jnp.sum(weights.reshape(-1, 1, 1) * bounded_noise, axis=0)
     u = u + weighted_noise
 
-    return u, key, xhist
+    return u, key, xhist, uhist
 
 
 class MPPI_Jax_Debug:
@@ -112,6 +123,7 @@ class MPPI_Jax_Debug:
         K=20000,
         step=0.02,
         T=70,
+        history=None,
         device="mps",
     ):
         """
@@ -144,6 +156,7 @@ class MPPI_Jax_Debug:
         self.x_d = x_d
         self.u_d = u_d
         self.T = T
+        self.history = history
 
         self.step = step
         self.cv = cv
@@ -174,7 +187,7 @@ class MPPI_Jax_Debug:
         v = self.bound_control(v)
         noise = v - u
 
-        S, xhist = rollout(
+        S, xhist, vhist = rollout(
             x,
             u,
             noise,
@@ -185,9 +198,10 @@ class MPPI_Jax_Debug:
             self.bound_control,
             self.dynamics,
             self.step,
+            self.history
         )
 
-        return S, noise, xhist
+        return S, noise, xhist, vhist
 
     def run_mpc(self, x: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
         """
@@ -200,7 +214,7 @@ class MPPI_Jax_Debug:
             torch.Tensor: Control output
         """
 
-        u, self.key, xhist = mpc_step(
+        u, self.key, xhist, vhist = mpc_step(
             x,
             self.last_trajectory,
             self.u_d,
@@ -219,4 +233,4 @@ class MPPI_Jax_Debug:
         # self.u_history = self.u_history.at[-1].set(u[0])
         self.last_trajectory = u
 
-        return u[0], xhist
+        return u[0], xhist, vhist

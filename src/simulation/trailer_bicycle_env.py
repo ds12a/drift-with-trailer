@@ -75,7 +75,7 @@ class DynamicTrailerBicycleModel:
             x=x,
             y=y,
             yaw_truck=yaw,
-            yaw_trailer=yaw + 0.5,
+            yaw_trailer=yaw,
             vx=speed,
             vy=0.0,
             yaw_truck_rate=0.0,
@@ -242,8 +242,8 @@ class DynamicTrailerBicycleModel:
         # Trapezoidal (avg) approximations
         avg_vx = 0.5 * (v_1x + next_vx)
         avg_vy = 0.5 * (v_1y + next_vy)
-        avg_phi_1_dot = 0.5 * (phi_1_dot + next_phi_1_dot)
-        avg_phi_2_dot = 0.5 * (phi_2_dot + next_phi_2_dot)
+        # avg_phi_1_dot = 0.5 * (phi_1_dot + next_phi_1_dot)
+        # avg_phi_2_dot = 0.5 * (phi_2_dot + next_phi_2_dot)
 
         # Change of frame
         xdot = avg_vx * jnp.cos(phi_1) - avg_vy * jnp.sin(phi_1)
@@ -251,8 +251,8 @@ class DynamicTrailerBicycleModel:
 
         next_x = x + xdot * dt
         next_y = y + ydot * dt
-        next_phi_1 = phi_1 + avg_phi_1_dot * dt
-        next_phi_2 = phi_2 + avg_phi_2_dot * dt
+        next_phi_1 = phi_1 + phi_1_dot * dt
+        next_phi_2 = phi_2 + phi_2_dot * dt
 
         return VehicleState(
             next_x,
@@ -280,9 +280,11 @@ class TrailerBicycleEnv(gym.Env):
         render_mode: str | None = None,
         render_width: int = 1280,
         render_height: int = 720,
-        scenario = None
+        scenario=None,
+        v_init=6.0,
     ) -> None:
         super().__init__()
+        self.v_init = v_init
 
         if scenario is None:
             scenario = TrailerBicycleEnvConfig(
@@ -340,7 +342,7 @@ class TrailerBicycleEnv(gym.Env):
             heading_error = float(
                 initial_heading_error if initial_heading_error is not None else 0.0
             )
-            speed = float(initial_speed if initial_speed is not None else 8.0)
+            speed = float(initial_speed if initial_speed is not None else self.v_init)
             return self.dynamics.initial_state(
                 self.track,
                 progress=progress,
@@ -349,7 +351,7 @@ class TrailerBicycleEnv(gym.Env):
                 speed=speed,
             )
 
-        return self.dynamics.initial_state(self.track, progress=0.0, speed=8.0)
+        return self.dynamics.initial_state(self.track, progress=0.0, speed=self.v_init)
 
     def _observation(self) -> np.ndarray:
         assert self._state is not None
@@ -402,6 +404,8 @@ class TrailerBicycleEnv(gym.Env):
         self._step_count = 0
         self._lap_count = 0
         self._last_index = None
+
+        _, self._last_index = self.track.project(self._state.x, self._state.y, None)
 
         obs = self._observation()
         info = {
@@ -465,7 +469,6 @@ class TrailerBicycleEnv(gym.Env):
             >= self.scenario.vehicle.max_hitch
         )
 
-      
         return self._observation(), 0, terminated, False, info
 
     def render(self):
