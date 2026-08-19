@@ -121,7 +121,7 @@ class BeamNGTrailerEnv(gym.Env):
         centerline = np.hstack(
             [
                 self.track.centerline,
-                np.full((self.track.centerline.shape[0], 1), 20),
+                np.full((self.track.centerline.shape[0], 1), 200),
                 np.ones((self.track.centerline.shape[0], 1)) * self.track.width,
             ]
         )
