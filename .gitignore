@@ -40,3 +40,4 @@ gym_videos
 src/learning/models/trained/
 *.bak
 wandb/
+Learned_Model_Predictive_Dynamics_for_Robust_Tractor_Trailer_Control_under_Uncertainty/
