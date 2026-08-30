@@ -3,20 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Learned model predictive dynamics for robust tractor-trailer control under uncertainty." />
-    <title>Learned Dynamics for Robust Tractor-Trailer Control</title>
+    <meta name="description" content="Learning dynamics for high-speed tractor-trailer control in high-fidelity unknown environments." />
+    <title>Learning Dynamics for High-Speed Tractor-Trailer Control</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main id="top">
       <section class="hero" aria-labelledby="project-title">
         <div class="hero-copy">
-          <h1 id="project-title">Learned Model Predictive Dynamics for Robust <em>Tractor–Trailer</em> Control under Uncertainty</h1>
+          <h1 id="project-title">Learning Dynamics for <em>High-Speed Tractor–Trailer Control</em></h1>
           <p class="authors">
             Aaron Chen<sup>*</sup>, David Shen<sup>*</sup>, Taekyung Kim<sup>*</sup>, Kaleb Ben Naveed, and Dimitra Panagou
           </p>
           <p class="affiliations">University of Michigan &nbsp;·&nbsp; <sup>*</sup>Equal contribution</p>
-          <p class="focus-line">High-speed reverse driving &nbsp;·&nbsp; Snow, slope &amp; banking &nbsp;·&nbsp; Jackknife avoidance</p>
+          <p class="focus-line">High-speed forward &amp; reverse driving &nbsp;·&nbsp; BeamNG.tech unknown dynamics &nbsp;·&nbsp; Variable terrain</p>
           <div class="actions" aria-label="Project links">
             <a class="button button-primary" href="assets/paper.pdf" target="_blank" rel="noopener"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>Paper</a>
             <a class="button button-secondary" href="https://github.com/tkkim-robot/drift-with-trailer" target="_blank" rel="noopener"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/></svg>Code</a>
@@ -32,10 +32,10 @@
         <div class="abstract-copy">
           <h2 id="abstract-title">TL;DR</h2>
           <p>
-            We study the hardest regime for tractor–trailer control: high-speed reverse driving when the vehicle encounters unobserved snow patches, slopes, and banking. Our MLP-based learned dynamics model is used within an MPPI controller to infer these hidden effects from state-action history.
+            We study high-speed forward and reverse tractor–trailer control in BeamNG.tech, a high-fidelity soft-body simulator whose suspension, load transfer, road friction, terrain, and powertrain effects are unavailable to the analytic model. Our learned dynamics model uses recent state-action history to infer these hidden influences during control.
           </p>
           <p>
-            Compared with a Fiala-tire analytic prior and residual model, the fully learned model produces more stable long-horizon rollouts, tracks reverse velocity targets more reliably, and reduces hitch-angle error for better jackknife avoidance—even on sloped terrain absent from training.
+            We compare a fully learned MLP with a residual model built on a reduced-order Fiala-tire prior. The fully learned model delivers more consistent long-horizon behavior and stronger closed-loop tracking, particularly in reverse and when terrain changes are not represented in its training data.
           </p>
         </div>
       </section>
@@ -43,7 +43,7 @@
       <section class="objective-section" aria-labelledby="objective-title">
         <div class="objective-heading">
           <h2 id="objective-title">Control objective</h2>
-          <p>Maintain stable reverse motion when vehicle and terrain dynamics are only partially observed.</p>
+          <p>Maintain stable high-speed motion when vehicle and terrain dynamics are only partially observed.</p>
         </div>
         <div class="objective-grid">
           <article><span class="objective-symbol">v<sup>★</sup></span><h3>Track the target speed</h3><p>Reach the commanded forward or reverse velocity without stalling.</p></article>
@@ -57,7 +57,7 @@
           <div class="section-label">Why tractor–trailers?</div>
           <div>
             <h2 id="motivation-title">Reverse motion at speed makes uncertainty impossible to ignore.</h2>
-            <p>Tractor–trailer systems offer a demanding, safety-critical setting for learned dynamics: the vehicle is nonlinear and underactuated, while the passive trailer can rapidly destabilize the overall system.</p>
+            <p>Tractor–trailer systems offer a demanding setting for learned dynamics: the vehicle is nonlinear and underactuated, while the passive trailer can rapidly destabilize the overall system near its handling limits.</p>
           </div>
         </div>
         <div class="motivation-grid">
@@ -87,18 +87,18 @@
           <div class="contribution-grid">
             <article>
               <span class="number">01</span>
-              <h3>Reverse driving at speed</h3>
-              <p>Target the unstable reverse-driving regime, where small dynamics errors can quickly compound into loss of tracking or jackknife.</p>
+              <h3>Reduced-order analytic prior</h3>
+              <p>Introduce a tractor–trailer model with Fiala brush tire forces as an interpretable dynamics baseline.</p>
             </article>
             <article>
               <span class="number">02</span>
-              <h3>Hidden terrain effects</h3>
-              <p>Test changing friction, slope, and banking without directly providing terrain information to the learned controller.</p>
+              <h3>Pure versus residual learning</h3>
+              <p>Compare fully learned model prediction against residual prediction from the physical prior.</p>
             </article>
             <article>
               <span class="number">03</span>
-              <h3>Learned versus physics prior</h3>
-              <p>Compare fully learned dynamics with a residual model built on the reduced-order Fiala-tire analytic prior.</p>
+              <h3>High-fidelity uncertainty</h3>
+              <p>Evaluate learned control under variable friction, terrain, and unknown vehicle dynamics in BeamNG.tech.</p>
             </article>
           </div>
         </div>
@@ -108,22 +108,22 @@
         <div class="section-heading">
           <div class="section-label"><span>03</span> Method</div>
           <div>
-            <h2 id="method-title">Learned rollouts for uncertain tractor–trailer control.</h2>
-            <p>Our controller relies on learned state transitions that remain informative when road friction, terrain, and vehicle behavior are not directly measured.</p>
+            <h2 id="method-title">Learned rollouts for high-speed tractor–trailer control.</h2>
+            <p>Our controller relies on learned state transitions that remain informative when high-fidelity vehicle effects and terrain variables are not directly measured.</p>
           </div>
         </div>
         <figure class="wide-figure figure-card">
           <img src="assets/controller-architecture.png" alt="Block diagram of the learned dynamics model, MPPI controller, and tractor-trailer simulation loop." />
-          <figcaption>Controller architecture. A context window of observed states and actions helps the learned model infer unmeasured terrain and vehicle dynamics during control rollout.</figcaption>
+          <figcaption>Controller architecture. The learned model is trained from offline trajectories, then uses a sliding state-action history for its internal rollout dynamics.</figcaption>
         </figure>
         <div class="method-grid">
           <article>
             <h3>Fully learned dynamics</h3>
-            <p>An MLP consumes a fixed-length sliding window of observed states and actions, then predicts the next system transition directly from data.</p>
+            <p>A four-layer MLP with 128 units per layer consumes a four-step history of observed states and actions, then predicts the next system transition.</p>
           </article>
           <article>
             <h3>Residual dynamics</h3>
-            <p>A second MLP predicts only the discrepancy from the Fiala-tire prior, testing whether the analytic model improves the learned rollout.</p>
+            <p>A second MLP predicts only the discrepancy from the Fiala-tire prior, testing whether the physical model improves the learned rollout.</p>
           </article>
           <article>
             <h3>Uncertainty-aware rollout</h3>
@@ -131,10 +131,10 @@
           </article>
         </div>
         <div class="mlp-explainer" aria-label="How the MLP dynamics model works">
-          <div class="mlp-intro"><h3>How the learned dynamics model works</h3><p>Rather than receiving an explicit friction map or terrain label, the model infers hidden effects from the recent motion of the tractor–trailer.</p></div>
-          <article><span>01</span><h3>Read a motion history</h3><p>The input window contains recent vehicle state estimates and applied steering/acceleration commands, including the evolving hitch configuration.</p></article>
-          <article><span>02</span><h3>Predict the next transition</h3><p>The MLP maps that context to the next-state change, learning how traction loss, road grade, and vehicle behavior affect the response.</p></article>
-          <article><span>03</span><h3>Use the model in closed loop</h3><p>The learned transition is queried throughout control, so accurate terrain-sensitive prediction is essential for speed tracking and jackknife avoidance.</p></article>
+          <div class="mlp-intro"><h3>How the learned dynamics model works</h3><p>The network has four hidden layers of 128 units and a four-step state-action history. It receives no explicit terrain, friction, or suspension state.</p></div>
+          <article><span>01</span><h3>Read a motion history</h3><p>The history includes hitch configuration, body-frame velocity, yaw rates, commanded steering/acceleration, and their realized values.</p></article>
+          <article><span>02</span><h3>Predict the vehicle response</h3><p>The MLP predicts the next acceleration and realized-control response, learning effects caused by traction loss, grade, and unmodeled vehicle behavior.</p></article>
+          <article><span>03</span><h3>Train from diverse trajectories</h3><p>Offline data spans target speeds and friction levels, with additional weaving trajectories that expose richer tire-force behavior.</p></article>
         </div>
       </section>
 
@@ -143,7 +143,7 @@
           <div class="section-label">Analytic dynamics</div>
           <div>
             <h2 id="dynamics-title">A coupled tractor–trailer model with Fiala tire forces.</h2>
-            <p>Alongside the learned predictor, we derive a reduced-order dynamics model that exposes the physical coupling at the hitch and provides an interpretable analytic prior.</p>
+            <p>Alongside the learned predictor, we derive a reduced-order model with Fiala brush tire forces. It exposes the physical coupling at the hitch and serves as an interpretable analytic prior.</p>
           </div>
         </div>
         <div class="dynamics-grid">
@@ -177,13 +177,13 @@
         <div class="section-heading">
           <div class="section-label">Simulation settings</div>
           <div>
-            <h2 id="settings-title">Reverse driving across progressively richer uncertainty.</h2>
-            <p>We use the same high-speed forward and reverse racing task while progressively changing the terrain and unmodeled environmental effects seen by the controller. Snow + slope is the critical transfer setting.</p>
+            <h2 id="settings-title">High-speed racing under progressively richer uncertainty.</h2>
+            <p>We evaluate forward and reverse driving on a Barcelona-Catalunya–shaped racetrack in BeamNG.tech. The simulator supplies unobserved soft-body, suspension, load-transfer, and terrain effects; Snow + slope is the critical transfer setting.</p>
           </div>
         </div>
         <div class="setting-grid">
-          <article><span>01</span><h3>Asphalt</h3><p>Uniform high-friction, flat pavement. This nominal condition isolates the effect of unknown vehicle dynamics.</p></article>
-          <article><span>02</span><h3>Snow</h3><p>Noisy patches of low-friction snow interrupt an otherwise flat track, creating rapidly changing tire behavior.</p></article>
+          <article><span>01</span><h3>Asphalt</h3><p>Uniform high-friction, flat pavement in the high-fidelity simulator. This nominal condition isolates unknown vehicle dynamics.</p></article>
+          <article><span>02</span><h3>Snow</h3><p>Noisy patches of low-friction snow interrupt an otherwise flat track, creating changing tire behavior under the same track geometry.</p></article>
           <article class="hardest-setting"><span>03</span><h3>Snow + slope</h3><p>Snow patches combine with slope and banking—hidden terrain variables that are absent from the learned model’s training data and most challenging in reverse.</p></article>
         </div>
       </section>
@@ -192,40 +192,40 @@
         <div class="section-heading">
           <div class="section-label"><span>04</span> Results</div>
           <div>
-            <h2 id="results-title">High-speed reverse control under unmodeled terrain.</h2>
-            <p>The fully learned model delivers dependable open-loop predictions and stronger closed-loop tracking, particularly when reverse motion meets snow, slopes, banking, and other uncertainty absent from training.</p>
+            <h2 id="results-title">Learned dynamics under high-fidelity unknown physics.</h2>
+            <p>The fully learned model provides more stable open-loop behavior across velocity ranges and stronger closed-loop tracking, particularly in reverse and under terrain variation unseen during training.</p>
           </div>
         </div>
         <div class="results-grid">
           <figure class="figure-card prediction-card">
             <img src="assets/prediction-error.png" alt="Open-loop prediction error plots comparing pure learned and prior plus residual dynamics across speed and direction." />
-            <figcaption><strong>Open-loop dynamics prediction.</strong> The pure learned model avoids severe low-speed velocity divergence present in the analytic-prior residual formulation.</figcaption>
+            <figcaption><strong>Open-loop dynamics prediction.</strong> The pure learned model avoids severe low-speed velocity divergence present in the analytic-prior residual formulation, while maintaining slower error growth over longer horizons.</figcaption>
           </figure>
           <div class="findings">
             <article>
               <span class="finding-accent">1</span>
-              <div><h3>Reliable reverse velocity tracking</h3><p>Across reverse tests, the learned controller reaches target speeds more consistently than the analytic prior.</p></div>
+              <div><h3>Stable learned rollouts</h3><p>The pure learned model avoids the analytic prior’s severe low-speed velocity spikes and has slower long-horizon error growth.</p></div>
             </article>
             <article>
               <span class="finding-accent">2</span>
-              <div><h3>Better jackknife avoidance</h3><p>Lower hitch-angle error indicates stronger recovery and stability while reversing under uncertainty.</p></div>
+              <div><h3>Reliable reverse velocity tracking</h3><p>Across reverse tests, the learned controller reaches target speeds more consistently than the analytic-prior controller.</p></div>
             </article>
             <article>
               <span class="finding-accent">3</span>
-              <div><h3>Transfer to snow + slope</h3><p>Performance stays strong with snow patches, slope, and banking—terrain effects not provided during training.</p></div>
+              <div><h3>Transfer to snow + slope</h3><p>Performance remains strong when slope and banking are introduced despite never appearing in the learned model’s training data.</p></div>
             </article>
           </div>
         </div>
         <div class="environment-grid">
           <figure class="figure-card"><img src="assets/environments.png" alt="Top-down views of asphalt, snow, and snow plus slope test environments." /><figcaption><strong>Three test environments.</strong> The Snow + slope setting adds changing friction, slope, and banking to the reverse-driving task.</figcaption></figure>
-          <figure class="figure-card"><img src="assets/beamng-reverse.png" alt="A tractor-trailer driving in reverse through a snowy sloped environment." /><figcaption><strong>High-speed reverse driving in Snow + slope.</strong> A learned-model controller navigates the hardest terrain-transfer setting.</figcaption></figure>
+          <figure class="figure-card"><img src="assets/beamng-reverse.png" alt="A tractor-trailer driving in reverse through a snowy sloped BeamNG.tech environment." /><figcaption><strong>Reverse driving in BeamNG.tech.</strong> Fully learned dynamics control navigates the Snow + slope terrain-transfer setting.</figcaption></figure>
         </div>
       </section>
 
     </main>
 
     <footer>
-      <p>Learned Model Predictive Dynamics for Robust Tractor–Trailer Control under Uncertainty</p>
+      <p>Learning Dynamics for High-Speed Tractor–Trailer Control</p>
       <a href="#top">Back to top ↑</a>
     </footer>
   </body>
