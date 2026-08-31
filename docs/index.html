@@ -35,7 +35,7 @@
             We study high-speed forward and reverse tractor–trailer control in BeamNG.tech, a high-fidelity soft-body simulator whose suspension, load transfer, road friction, terrain, and powertrain effects are unavailable to the analytic model. Our learned dynamics model uses recent state-action history to infer these hidden influences during control.
           </p>
           <p>
-            We compare a fully learned MLP with a residual model built on a reduced-order Fiala-tire prior. The fully learned model delivers more consistent long-horizon behavior and stronger closed-loop tracking, particularly in reverse and when terrain changes are not represented in its training data.
+            We compare a fully learned MLP with a residual model built on a reduced-order Fiala-tire prior. The fully learned model avoids the residual formulation’s low-speed numerical degradation and provides stronger closed-loop speed and hitch-angle regulation, particularly in reverse and when terrain changes are not represented in its training data.
           </p>
         </div>
       </section>
@@ -77,28 +77,33 @@
             <p>Road friction, slope, banking, suspension behavior, and payload-dependent effects are difficult to measure online, yet they substantially change how the vehicle responds.</p>
           </article>
         </div>
-        <p class="motivation-close">This makes high-speed reverse driving over snowy, sloped terrain a direct test of whether a learned dynamics model can provide useful control predictions when the analytic prior is incomplete.</p>
+        <p class="motivation-close">Most tractor–trailer research emphasizes parking, navigation, or collision avoidance; high-speed work usually assumes a fixed analytic model and rarely studies reverse motion. High-speed reverse driving over snowy, sloped terrain is therefore a direct test of whether learned dynamics can provide useful control predictions when the analytic prior is incomplete.</p>
       </section>
 
       <section class="contribution-section" aria-labelledby="contribution-title">
         <div class="section-label"><span>02</span> Contributions</div>
         <div>
-          <h2 id="contribution-title">A learned-dynamics pipeline for control at the limits.</h2>
+          <h2 id="contribution-title">Learning-based control at the handling limits.</h2>
           <div class="contribution-grid">
             <article>
               <span class="number">01</span>
-              <h3>Reduced-order analytic prior</h3>
-              <p>Introduce a tractor–trailer model with Fiala brush tire forces as an interpretable dynamics baseline.</p>
+              <h3>High-speed forward and reverse control</h3>
+              <p>Develop a learning-based control framework for tractor–trailer motion where vehicle and terrain dynamics are uncertain.</p>
             </article>
             <article>
               <span class="number">02</span>
-              <h3>Pure versus residual learning</h3>
-              <p>Compare fully learned model prediction against residual prediction from the physical prior.</p>
+              <h3>Reduced-order analytic prior</h3>
+              <p>Derive a coupled tractor–trailer model with Fiala brush tire forces as an interpretable baseline and residual-learning prior.</p>
             </article>
             <article>
               <span class="number">03</span>
+              <h3>Controlled model selection</h3>
+              <p>Compare fully learned and residual dynamics by their multi-step error growth and rollout stability across operating speeds.</p>
+            </article>
+            <article>
+              <span class="number">04</span>
               <h3>High-fidelity uncertainty</h3>
-              <p>Evaluate learned control under variable friction, terrain, and unknown vehicle dynamics in BeamNG.tech.</p>
+              <p>Evaluate closed-loop control under variable friction and unseen slope or banking in BeamNG.tech.</p>
             </article>
           </div>
         </div>
@@ -131,10 +136,10 @@
           </article>
         </div>
         <div class="mlp-explainer" aria-label="How the MLP dynamics model works">
-          <div class="mlp-intro"><h3>How the learned dynamics model works</h3><p>The network has four hidden layers of 128 units and a four-step state-action history. It receives no explicit terrain, friction, or suspension state.</p></div>
-          <article><span>01</span><h3>Read a motion history</h3><p>The history includes hitch configuration, body-frame velocity, yaw rates, commanded steering/acceleration, and their realized values.</p></article>
-          <article><span>02</span><h3>Predict the vehicle response</h3><p>The MLP predicts the next acceleration and realized-control response, learning effects caused by traction loss, grade, and unmodeled vehicle behavior.</p></article>
-          <article><span>03</span><h3>Train from diverse trajectories</h3><p>Offline data spans target speeds and friction levels, with additional weaving trajectories that expose richer tire-force behavior.</p></article>
+          <div class="mlp-intro"><h3>How the learned dynamics model works</h3><p>The network has four hidden layers of 128 units and a four-step state-action history. It receives no explicit terrain, friction, suspension, or powertrain state.</p></div>
+          <article><span>01</span><h3>Read a motion history</h3><p>The history encodes hitch configuration, body-frame velocity, yaw rates, and both commanded and realized steering and acceleration.</p></article>
+          <article><span>02</span><h3>Predict the response</h3><p>The MLP predicts vehicle accelerations and realized control response, allowing history to stand in for hidden traction, grade, and vehicle effects.</p></article>
+          <article><span>03</span><h3>Learn broad behavior</h3><p>Offline data spans target speeds and friction levels, with injected control noise and weaving trajectories that expose richer tire-force behavior.</p></article>
         </div>
       </section>
 
@@ -193,33 +198,45 @@
           <div class="section-label"><span>04</span> Results</div>
           <div>
             <h2 id="results-title">Learned dynamics under high-fidelity unknown physics.</h2>
-            <p>The fully learned model provides more stable open-loop behavior across velocity ranges and stronger closed-loop tracking, particularly in reverse and under terrain variation unseen during training.</p>
+            <p>The fully learned model provides stable open-loop behavior across velocity ranges and stronger closed-loop speed and hitch-angle regulation, particularly in reverse and under terrain variation unseen during training.</p>
           </div>
         </div>
         <div class="results-grid">
           <figure class="figure-card prediction-card">
             <img src="assets/prediction-error.png" alt="Open-loop prediction error plots comparing pure learned and prior plus residual dynamics across speed and direction." />
-            <figcaption><strong>Open-loop dynamics prediction.</strong> The pure learned model avoids severe low-speed velocity divergence present in the analytic-prior residual formulation, while maintaining slower error growth over longer horizons.</figcaption>
+            <figcaption><strong>Open-loop dynamics prediction.</strong> The pure learned model avoids severe low-speed numerical degradation in the analytic-prior residual formulation, while maintaining slower error growth over longer horizons.</figcaption>
           </figure>
           <div class="findings">
             <article>
               <span class="finding-accent">1</span>
-              <div><h3>Stable learned rollouts</h3><p>The pure learned model avoids the analytic prior’s severe low-speed velocity spikes and has slower long-horizon error growth.</p></div>
+              <div><h3>Stable learned rollouts</h3><p>The pure learned model avoids the residual model’s severe low-speed degradation and maintains slower long-horizon error growth.</p></div>
             </article>
             <article>
               <span class="finding-accent">2</span>
-              <div><h3>Reliable reverse velocity tracking</h3><p>Across reverse tests, the learned controller reaches target speeds more consistently than the analytic-prior controller.</p></div>
+              <div><h3>Reliable reverse regulation</h3><p>Across reverse tests, the learned controller reaches target speeds and regulates the hitch angle more consistently than the analytic-prior controller.</p></div>
             </article>
             <article>
               <span class="finding-accent">3</span>
-              <div><h3>Transfer to snow + slope</h3><p>Performance remains strong when slope and banking are introduced despite never appearing in the learned model’s training data.</p></div>
+              <div><h3>Transfer to snow + slope</h3><p>Performance remains strong when slope and banking are introduced, despite never appearing in the learned model’s training data.</p></div>
             </article>
           </div>
         </div>
-        <div class="environment-grid">
-          <figure class="figure-card"><img src="assets/environments.png" alt="Top-down views of asphalt, snow, and snow plus slope test environments." /><figcaption><strong>Three test environments.</strong> The Snow + slope setting adds changing friction, slope, and banking to the reverse-driving task.</figcaption></figure>
-          <figure class="figure-card"><img src="assets/beamng-reverse.png" alt="A tractor-trailer driving in reverse through a snowy sloped BeamNG.tech environment." /><figcaption><strong>Reverse driving in BeamNG.tech.</strong> Fully learned dynamics control navigates the Snow + slope terrain-transfer setting.</figcaption></figure>
-        </div>
+        <figure class="figure-card featured-comparison">
+          <video controls autoplay muted loop playsinline preload="metadata" aria-label="Side-by-side comparison of prior and learned-model reverse tractor-trailer control on a steep snowy hill.">
+            <source src="assets/compare.mp4" type="video/mp4" />
+            Your browser does not support embedded video.
+          </video>
+          <figcaption><strong>Prior vs. learned control on a steep snowy hill.</strong> The analytic-prior controller jackknifes, while the learned-model controller completes the reverse-driving maneuver. This is the challenging Snow + slope transfer setting.</figcaption>
+        </figure>
+        <figure class="figure-card environment-overview"><img src="assets/environments.png" alt="Top-down views of asphalt, snow, and snow plus slope test environments." /><figcaption><strong>Three test environments.</strong> The Snow + slope setting adds changing friction, slope, and banking to the reverse-driving task.</figcaption></figure>
+        <section class="reverse-demos" aria-labelledby="reverse-demos-title">
+          <h3 id="reverse-demos-title">Reverse-driving scenario demos</h3>
+          <div class="scenario-video-grid">
+            <figure class="figure-card"><video controls muted loop playsinline preload="metadata" aria-label="Reverse tractor-trailer driving on the asphalt scenario."><source src="assets/asphalt.mp4" type="video/mp4" />Your browser does not support embedded video.</video><figcaption><strong>Asphalt.</strong> Flat, uniform high-friction pavement.</figcaption></figure>
+            <figure class="figure-card"><video controls muted loop playsinline preload="metadata" aria-label="Reverse tractor-trailer driving on the snow scenario."><source src="assets/snow.mp4" type="video/mp4" />Your browser does not support embedded video.</video><figcaption><strong>Snow.</strong> Reverse driving through changing low-friction patches.</figcaption></figure>
+            <figure class="figure-card"><video controls muted loop playsinline preload="metadata" aria-label="Reverse tractor-trailer driving on the snow and slope scenario."><source src="assets/slope.mp4" type="video/mp4" />Your browser does not support embedded video.</video><figcaption><strong>Snow + slope.</strong> Reverse driving with friction, grade, and banking variation.</figcaption></figure>
+          </div>
+        </section>
       </section>
 
     </main>
