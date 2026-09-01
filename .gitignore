@@ -30,6 +30,8 @@ uv.lock
 *.mp4
 *.mov
 *.avi
+# The project site deliberately serves its demonstration videos from docs/assets.
+!docs/assets/*.mp4
 experiments/**/outputs/
 experiments/**/runs/
 src/learning/datasets/raw/
