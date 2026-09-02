@@ -40,7 +40,7 @@ cost_kwargs = {
     "v_target": -25,
     "p_weight": 1e2,
     "p_slow_weight": 1e0,
-    "s_weight": 1e2,
+    "s_weight": 0,
     "c_weight": 1e-2,
     "a_weight": 1e2,
 }

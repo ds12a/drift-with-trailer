@@ -413,6 +413,17 @@ class PyBulletMirrorRenderer:
         pixels[~valid] = np.nan
         return pixels
 
+    # Distinguishable at width-1 with low alpha; the last entry lines up with the
+    # trailing alpha island, which is the one that carries no nominal.
+    PLANNER_ISLAND_RGB = (
+        (84, 180, 255),
+        (120, 220, 140),
+        (255, 176, 92),
+        (200, 140, 255),
+        (255, 120, 150),
+        (150, 150, 150),
+    )
+
     def _overlay_planner_debug(
         self,
         frame: np.ndarray,
@@ -422,8 +433,6 @@ class PyBulletMirrorRenderer:
     ) -> np.ndarray:
         if planner_debug is None:
             return frame
-        image = Image.fromarray(frame.astype(np.uint8), mode="RGB").convert("RGBA")
-        draw = ImageDraw.Draw(image, "RGBA")
 
         candidate_xy = np.asarray(
             planner_debug.get("candidate_xy", np.zeros((0, 0, 2), dtype=np.float32)),
@@ -432,12 +441,45 @@ class PyBulletMirrorRenderer:
         final_xy = np.asarray(
             planner_debug.get("final_xy", np.zeros((0, 2), dtype=np.float32)), dtype=np.float32
         )
+        if candidate_xy.size == 0 and final_xy.size == 0:
+            return frame
 
-        for trajectory in candidate_xy:
-            pixels = self._project_xy(trajectory, view, projection)
-            pixels = pixels[np.all(np.isfinite(pixels), axis=1)]
-            if len(pixels) >= 2:
-                draw.line([tuple(point) for point in pixels], fill=(84, 180, 255, 46), width=1)
+        image = Image.fromarray(frame.astype(np.uint8), mode="RGB").convert("RGBA")
+        draw = ImageDraw.Draw(image, "RGBA")
+
+        if candidate_xy.size:
+            # One batched projection for the whole (n, T, 2) bundle rather than
+            # one 4x4 matrix build and matmul per trajectory.
+            n_traj, n_steps = candidate_xy.shape[0], candidate_xy.shape[1]
+            pixels = self._project_xy(
+                candidate_xy.reshape(-1, 2), view, projection
+            ).reshape(n_traj, n_steps, 2)
+
+            # Optional channels from build_planner_debug: per-trajectory MPPI
+            # weight sets brightness, island id sets hue. Absent -> the previous
+            # uniform blue.
+            weights = planner_debug.get("candidate_w")
+            weights = None if weights is None else np.asarray(weights, dtype=np.float32)
+            islands = planner_debug.get("candidate_island")
+            islands = None if islands is None else np.asarray(islands, dtype=np.int32)
+
+            for k in range(n_traj):
+                trajectory = pixels[k]
+                trajectory = trajectory[np.all(np.isfinite(trajectory), axis=1)]
+                if len(trajectory) < 2:
+                    continue
+
+                rgb = (
+                    self.PLANNER_ISLAND_RGB[int(islands[k]) % len(self.PLANNER_ISLAND_RGB)]
+                    if islands is not None
+                    else (84, 180, 255)
+                )
+                a = 46 if weights is None else int(28 + 200 * float(weights[k]))
+                draw.line(
+                    [tuple(point) for point in trajectory],
+                    fill=(rgb[0], rgb[1], rgb[2], a),
+                    width=1,
+                )
 
         if len(final_xy) >= 2:
             pixels = self._project_xy(final_xy, view, projection)

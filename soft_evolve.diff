@@ -1,0 +1,536 @@
+--- a/src/controllers/mpc/particle_common.py
++++ b/src/controllers/mpc/particle_common.py
+@@ -312,10 +312,57 @@
+ # --------------------------------------------------------------------------- #
+ 
+ 
++def _island_softmax(S, iid, n_isl, lam):
++    """
++    Per-island softmax over window cost, min-subtracted inside each island so
++    islands stay independent and float32 never sees a large positive exponent.
++    """
++    smin = jax.ops.segment_min(S, iid, num_segments=n_isl)
++    e = jnp.exp(-(S - smin[iid]) / lam)
++    Z = jax.ops.segment_sum(e, iid, num_segments=n_isl)
++    return e / jnp.maximum(Z[iid], 1e-30)
++
++
++def _island_ess(w, iid, n_isl):
++    """Mean ESS of the per-island weight vectors, as a fraction-free count."""
++    sq = jax.ops.segment_sum(w**2, iid, num_segments=n_isl)
++    return jnp.mean(1.0 / jnp.maximum(sq, 1e-30))
++
++
++def _island_categorical(key, w, iid, istart, isize, n_isl):
++    """
++    One partner index per particle, drawn from its own island's softmax.
++
++    Islands are contiguous, so the global cumsum is monotone across them and a
++    single searchsorted lands inside the right island once the draw is offset by
++    that island's exclusive prefix mass. Weights are already normalised per
++    island, so the within-island mass is 1.
++    """
++    K = w.shape[0]
++    csum = jnp.cumsum(w)
++    excl = jnp.where(istart > 0, csum[jnp.maximum(istart - 1, 0)], 0.0)
++    r = jax.random.uniform(key, (K,))
++    idx = jnp.searchsorted(csum, excl + r, side="right")
++    return jnp.clip(idx, istart, istart + isize - 1)
++
++
++def _island_best(S, iid, n_isl):
++    K = S.shape[0]
++    best_val = jax.ops.segment_min(S, iid, num_segments=n_isl)
++    is_best = S <= best_val[iid]
++    best_idx = jax.ops.segment_max(
++        jnp.where(is_best, jnp.arange(K), -1), iid, num_segments=n_isl
++    )
++    return jnp.maximum(best_idx, 0)
++
++
+ def gen_evolve_fun(
+     rule: str = "de",
+     u_d: int = 2,
+     cv: ArrayLike | None = None,
++    lam: float = 1.0,
++    temp_scale: float = 1.0,
++    eta: float = 0.5,
+     sigma_scale: float = 0.5,
+     F: float = 0.6,
+     CR: float = 0.9,
+@@ -331,85 +378,107 @@
+         init_state(K, T)                      -> pytree carried across checkpoints
+         propose(key, state, eps_win, S_win,
+                 island_id, island_start,
+-                island_size, n_islands, t_a)  -> eps_prop (K, L, u_d)
++                island_size, n_islands, t_a)  -> (eps_prop (K, L, u_d), aux dict)
+         update(state, eps_win, eps_prop,
+                S_win, S_prop, accepted, t_a)  -> pytree
+ 
++    `aux` carries scalars for the debug diagnostics and may be empty.
++
+     All proposals act on the *noise* eps = v - u over the window, never on v, so
+-    the shared nominal cancels out of DE difference vectors and PSO velocities.
+-    The caller re-bounds `u + eps_prop` before simulating it.
++    the shared nominal cancels out of difference vectors and attractors. The
++    caller re-bounds `u + eps_prop` before simulating it.
++
++    Temperature
++    -----------
++    The informed rules weight the population by `exp(-(S_win - min)/lam_e)` with
++    `lam_e = lam * temp_scale`, `lam` defaulting to the controller's own
++    `inverse_temp`. This inherits MPPI's own pathology in miniature: too sharp
++    and the attractor is the single best particle, too soft and it is the island
++    mean, which is the nominal. `temp_scale` is the knob and
++    `aux["attract_ess"]` is its health check -- the mean per-island ESS of the
++    attraction weights. Somewhere in the tens is the useful range at K/island
++    around 100.
+ 
+     Rules
+     -----
+     "none"     identity; disables evolution (resample-only ablation)
+-    "mh"       Gaussian random walk. The only rule that keeps the proposal
+-               symmetric, hence the only one for which accept="mh" is a valid
+-               Metropolis-Hastings move on the path measure.
+-    "de"       DE/rand/1/bin within island. The difference vector is
+-               scale-adaptive for free: wide when the island is spread, narrow
+-               as it concentrates -- which is the right behaviour for a
+-               one-sample-wide feasible valley, and what a fixed sigma_prop
+-               would otherwise have to be hand-tuned to imitate.
+-    "de_best"  DE/current-to-best/1/bin. Faster, less diverse.
++    "mh"       Gaussian random walk. Uninformed, and the only rule for which
++               accept="mh" is a valid Metropolis-Hastings move on the path
++               measure -- the others are optimisers and change the target.
++    "de"       DE/rand/1/bin within island. Difference vector is scale-adaptive
++               for free: wide when the island is spread, narrow as it
++               concentrates.
++    "de_best"  DE/current-to-best/1/bin. Single attractor, fastest collapse.
++    "soft"     Path-integral attraction. Each particle moves a fraction `eta`
++               toward its island's softmax-weighted mean noise sequence, plus
++               exploration noise:
++
++                   mu_m  = sum_k w_k eps_k          (w from the island softmax)
++                   eps' = eps + eta (mu_m - eps) + sigma xi
++
++               The attractor is exactly MPPI's own update restricted to one
++               block and one island, so this is the path-integral estimate used
++               as a search direction rather than as a final answer. Note
++               eta=1, sigma=0 makes every particle in an island identical, which
++               is total collapse -- eta < 1 and sigma > 0 are what keep the
++               population alive. Closest relatives are CEM/EDA mean-shift
++               (Estimation of Distribution Algorithms) and, if a repulsion term
++               were added, Stein Variational MPC.
++    "soft_de"  DE/current-to-soft-best/1/bin. Each particle draws its *own*
++               attractor from the island softmax, so good particles pull without
++               everyone collapsing onto one of them, and adds a difference
++               vector for scale adaptation:
++
++                   eps' = eps + eta (eps_a - eps) + F (eps_b - eps_c)
++
++               `a ~ softmax(-S/lam_e)` within island, `b, c` uniform. This is
++               JADE's current-to-pbest/1 (Zhang & Sanderson 2009) with a
++               softmax replacing the top-p truncation, which is the standard
++               answer to "attract toward good, not toward best". Default rule
++               for the informed setting.
+     "pso"      Velocity + personal best carried on the full (K, T, u_d) buffer
+-               and sliced by the window. An approximation: with one proposal per
+-               checkpoint and a sliding window, personal best is only meaningful
+-               across checkpoints, so `pbest` stores the best committed noise
+-               sequence so far and `pbest_S` its window cost at commit time.
++               and sliced by the window. An approximation here: with one
++               proposal per checkpoint and a sliding window, personal best is
++               only meaningful across checkpoints, so `pbest` stores the best
++               committed noise sequence so far.
+     """
+-    if rule not in ("none", "mh", "de", "de_best", "pso"):
+-        raise ValueError(f"unknown evolve rule {rule!r}")
++    valid = ("none", "mh", "de", "de_best", "soft", "soft_de", "pso")
++    if rule not in valid:
++        raise ValueError(f"unknown evolve rule {rule!r}, expected one of {valid}")
+ 
+     sigma = None
+     if cv is not None:
+         sigma = sigma_scale * jnp.sqrt(jnp.diag(jnp.asarray(cv)))
+ 
++    lam_e = lam * temp_scale
++
++    def _no_state(K, T):
++        return {}
++
++    def _no_update(state, eps_win, eps_prop, S_win, S_prop, accepted, t_a):
++        return state
++
+     # ---------------- none ----------------
+     if rule == "none":
+ 
+-        def init_state(K, T):
+-            return {}
+-
+         def propose(key, state, eps_win, S_win, iid, istart, isize, n_isl, t_a):
+-            return eps_win
+-
+-        def update(state, eps_win, eps_prop, S_win, S_prop, accepted, t_a):
+-            return state
++            return eps_win, {}
+ 
+-        return init_state, propose, update
++        return _no_state, propose, _no_update
+ 
+     # ---------------- mh ----------------
+     if rule == "mh":
+         if sigma is None:
+             raise ValueError("rule='mh' needs cv for the proposal scale")
+ 
+-        def init_state(K, T):
+-            return {}
+-
+         def propose(key, state, eps_win, S_win, iid, istart, isize, n_isl, t_a):
+-            xi = jax.random.normal(key, eps_win.shape) * sigma
+-            return eps_win + xi
++            return eps_win + jax.random.normal(key, eps_win.shape) * sigma, {}
+ 
+-        def update(state, eps_win, eps_prop, S_win, S_prop, accepted, t_a):
+-            return state
+-
+-        return init_state, propose, update
++        return _no_state, propose, _no_update
+ 
+     # ---------------- de / de_best ----------------
+     if rule in ("de", "de_best"):
+ 
+-        def init_state(K, T):
+-            return {}
+-
+-        def _island_best(S_win, iid, n_isl):
+-            K = S_win.shape[0]
+-            best_val = jax.ops.segment_min(S_win, iid, num_segments=n_isl)
+-            is_best = S_win <= best_val[iid]
+-            best_idx = jax.ops.segment_max(
+-                jnp.where(is_best, jnp.arange(K), -1), iid, num_segments=n_isl
+-            )
+-            return jnp.maximum(best_idx, 0)
+-
+         def propose(key, state, eps_win, S_win, iid, istart, isize, n_isl, t_a):
+             K = eps_win.shape[0]
+             k1, k2, k3 = jax.random.split(key, 3)
+@@ -424,12 +493,55 @@
+                 mutant = eps_win + F * (eps_win[best] - eps_win) + F * diff
+ 
+             cross = jax.random.uniform(k3, eps_win.shape) < CR
+-            return jnp.where(cross, mutant, eps_win)
++            return jnp.where(cross, mutant, eps_win), {}
++
++        return _no_state, propose, _no_update
++
++    # ---------------- soft ----------------
++    if rule == "soft":
++        if sigma is None:
++            raise ValueError("rule='soft' needs cv for the exploration scale")
++
++        def propose(key, state, eps_win, S_win, iid, istart, isize, n_isl, t_a):
++            w = _island_softmax(S_win, iid, n_isl, lam_e)
++            mu = jax.ops.segment_sum(
++                w[:, None, None] * eps_win, iid, num_segments=n_isl
++            )
++            xi = jax.random.normal(key, eps_win.shape) * sigma
++            prop = eps_win + eta * (mu[iid] - eps_win) + xi
++            return prop, {"attract_ess": _island_ess(w, iid, n_isl)}
++
++        return _no_state, propose, _no_update
++
++    # ---------------- soft_de ----------------
++    if rule == "soft_de":
++
++        def propose(key, state, eps_win, S_win, iid, istart, isize, n_isl, t_a):
++            K = eps_win.shape[0]
++            k1, k2, k3, k4 = jax.random.split(key, 4)
++
++            w = _island_softmax(S_win, iid, n_isl, lam_e)
++            a = _island_categorical(k1, w, iid, istart, isize, n_isl)
++            b = istart + jax.random.randint(k2, (K,), 0, isize)
++            c = istart + jax.random.randint(k3, (K,), 0, isize)
++
++            mutant = (
++                eps_win
++                + eta * (eps_win[a] - eps_win)
++                + F * (eps_win[b] - eps_win[c])
++            )
++            cross = jax.random.uniform(k4, eps_win.shape) < CR
++            prop = jnp.where(cross, mutant, eps_win)
+ 
+-        def update(state, eps_win, eps_prop, S_win, S_prop, accepted, t_a):
+-            return state
++            aux = {
++                "attract_ess": _island_ess(w, iid, n_isl),
++                "attract_uniq": jnp.sum(
++                    jnp.bincount(a, length=K) > 0
++                ).astype(jnp.float32),
++            }
++            return prop, aux
+ 
+-        return init_state, propose, update
++        return _no_state, propose, _no_update
+ 
+     # ---------------- pso ----------------
+     def init_state(K, T):
+@@ -448,17 +560,12 @@
+         pbest = jax.lax.dynamic_slice(state["pbest"], (0, t_a, 0), (K, L, u_d))
+         pbest = jnp.where(state["pbest_set"][:, None, None], pbest, eps_win)
+ 
+-        best_val = jax.ops.segment_min(S_win, iid, num_segments=n_isl)
+-        is_best = S_win <= best_val[iid]
+-        gidx = jax.ops.segment_max(
+-            jnp.where(is_best, jnp.arange(K), -1), iid, num_segments=n_isl
+-        )
+-        gbest = eps_win[jnp.maximum(gidx, 0)[iid]]
++        gbest = eps_win[_island_best(S_win, iid, n_isl)[iid]]
+ 
+         r1 = jax.random.uniform(k1, eps_win.shape)
+         r2 = jax.random.uniform(k2, eps_win.shape)
+         new_vel = w_inertia * vel + c1 * r1 * (pbest - eps_win) + c2 * r2 * (gbest - eps_win)
+-        return eps_win + new_vel
++        return eps_win + new_vel, {}
+ 
+     def update(state, eps_win, eps_prop, S_win, S_prop, accepted, t_a):
+         K, L = eps_win.shape[0], eps_win.shape[1]
+--- a/src/controllers/mpc/bsmc_jax.py
++++ b/src/controllers/mpc/bsmc_jax.py
+@@ -112,7 +112,7 @@
+     resample_fn = RESAMPLE_SCHEMES[resample] if resample is not None else None
+ 
+     init_state, propose, evolve_update = gen_evolve_fun(
+-        rule=evolve_rule, u_d=u_d, cv=cv, **(evolve_kwargs or {})
++        rule=evolve_rule, u_d=u_d, cv=cv, lam=inverse_temp, **(evolve_kwargs or {})
+     )
+     evolving = evolve_rule != "none" and evolve_window > 0
+ 
+@@ -145,6 +145,7 @@
+         xhist_blocks = []
+         d_ess_pre, d_ess_post, d_sigma_S, d_accept, d_dS = [], [], [], [], []
+         d_sigma_S_bulk, d_gaps = [], []
++        d_aux: dict[str, list] = {}
+ 
+         for b in range(B):
+             t0, t1 = bounds[b]
+@@ -166,7 +167,7 @@
+                 S_win = jnp.sum(S_blk[a : b + 1], axis=0)
+ 
+                 key, subkey = jax.random.split(key)
+-                eps_prop = propose(
++                eps_prop, aux = propose(
+                     subkey, state, eps_win, S_win, iid, istart, isize, n_isl, t_a
+                 )
+                 v_prop = bound_control(u[t_a:t1][None] + eps_prop)
+@@ -213,6 +214,8 @@
+                 if debug:
+                     d_accept.append(jnp.mean(accepted.astype(jnp.float32)))
+                     d_dS.append(jnp.mean(jnp.where(accepted, S_prop - S_win, 0.0)))
++                    for name, value in aux.items():
++                        d_aux.setdefault(name, []).append(value)
+ 
+             # ---------------- weighting and selection ----------------
+             S_b = S_blk[b]
+@@ -260,6 +263,7 @@
+             "w_max": jnp.max(w),
+             "ess_final": ess(w),
+         }
++        diag.update({f"evolve_{k}": jnp.stack(v) for k, v in d_aux.items()})
+         xhist = jnp.swapaxes(jnp.concatenate(xhist_blocks, axis=0), 0, 1)
+         return u_new, key, xhist, v, diag
+ 
+@@ -305,7 +309,11 @@
+                 to (T,), which is the vanilla-MPPI regression configuration.
+             evolve_window (int): W, how many completed blocks back the evolution
+                 window reaches. 0 disables evolution. Costs (1+W)x vanilla.
+-            evolve_rule (str): "none" | "mh" | "de" | "de_best" | "pso".
++            evolve_rule (str): "none" | "mh" | "de" | "de_best" | "soft" |
++                "soft_de" | "pso". The informed rules ("soft", "soft_de") pull
++                particles toward softmax-weighted good regions of their island
++                rather than toward the single best, at a temperature of
++                inverse_temp * evolve_kwargs["temp_scale"].
+             evolve_kwargs (dict, optional): Rule parameters, see gen_evolve_fun.
+             accept (str): "mh" | "greedy". Only "mh" with evolve_rule="mh" is a
+                 valid Metropolis-Hastings move; the others are optimisers.
+--- a/experiments/exp_mppi_vibe/run_trailer_bsmc.py
++++ b/experiments/exp_mppi_vibe/run_trailer_bsmc.py
+@@ -33,6 +33,31 @@
+ lineages survive. Re-measure per cost configuration -- the number moves with
+ the weights, the speed, and the track width.
+ 
++Attraction temperature
++----------------------
++The informed rules weight the island by exp(-(S_win - min)/(inverse_temp *
++temp_scale)), which inherits MPPI's own pathology in miniature: sharp collapses
++onto the single best particle, soft averages to the island mean, which is the
++nominal. `evolve_attract_ess` in the diag is the health check. Measured on the
++toy plant at K/island = 50: temp_scale 0.05 -> attract ESS 1.6 with 10 distinct
++attractors, 1.0 -> 33 with 104, 50.0 -> 50 (uniform) with 124.
++
++On the real reverse IC at lambda = 134, K/island = 119, W = 1, all rules
++accepting greedily:
++
++    rule          accept   mean dS    attrESS  attrUniq  uniq_anc  final ESS
++    none            --        --         --       --        38       101
++    de             0.49    -6.9e7        --       --        57       175
++    de_best        0.60    -5.8e7        --       --        84       161
++    soft           0.68    -3.0e6       32.9      --        80       177
++    soft_de        0.56    -5.5e7       31.8      188        59        86
++    soft_de@0.1    0.59    -6.6e8        2.9       27        82       135
++
++The dS column is dominated by violation-penalty repair (1e12 scale), i.e. the
++move is annealing infeasible particles back inside the track -- which is the
++feasibility-repair behaviour the design is for, showing up as a measurement
++rather than an assumption.
++
+ viol_weight
+ -----------
+ exp_004 uses 1e12 against BeamNG's 1e5. At a sane lambda a 1e12 penalty flushes
+@@ -64,8 +89,12 @@
+     # uniform spacing is right at constant speed.
+     "blocks": (11, 11, 11, 11, 11),
+     "evolve_window": 1,          # W blocks back; costs (1+W)x vanilla MPPI
+-    "evolve_rule": "de",         # none | mh | de | de_best | pso
+-    "evolve_kwargs": {"F": 0.6, "CR": 0.9},
++    # none | mh | de | de_best | soft | soft_de | pso.  soft_de is the informed
++    # default: each particle draws its own attractor from the island softmax
++    # over window cost, so it moves toward good regions rather than toward the
++    # single best. temp_scale multiplies inverse_temp for that attraction only.
++    "evolve_rule": "soft_de",
++    "evolve_kwargs": {"eta": 0.5, "F": 0.6, "CR": 0.9, "temp_scale": 0.1},
+     "accept": "greedy",          # "mh" only means MH under evolve_rule="mh"
+     "prior_ratio": False,
+     "resample": "systematic",    # unconditional; identity at uniform weights
+--- a/experiments/exp_mppi_vibe/run_benchmark_trailer.py
++++ b/experiments/exp_mppi_vibe/run_benchmark_trailer.py
+@@ -77,6 +77,22 @@
+                 **_base(K_BSMC, T, lam),
+                 "blocks": _blocks(T, 5),
+                 "evolve_window": W,
++                "evolve_rule": "soft_de",
++                "evolve_kwargs": {"eta": 0.5, "temp_scale": 0.1},
++                "accept": "greedy",
++                "prior_ratio": False,
++                "resample": "systematic",
++                "island_size": 100,
++            },
++        ),
++        # ablations: uninformed update, islands off, evolution off, selection off
++        (
++            "BSMC-de",
++            "BSMC",
++            {
++                **_base(K_BSMC, T, lam),
++                "blocks": _blocks(T, 5),
++                "evolve_window": W,
+                 "evolve_rule": "de",
+                 "accept": "greedy",
+                 "prior_ratio": False,
+@@ -84,7 +100,6 @@
+                 "island_size": 100,
+             },
+         ),
+-        # ablations: islands off, evolution off, selection off
+         (
+             "BSMC-1i",
+             "BSMC",
+@@ -92,7 +107,8 @@
+                 **_base(K_BSMC, T, lam),
+                 "blocks": _blocks(T, 5),
+                 "evolve_window": W,
+-                "evolve_rule": "de",
++                "evolve_rule": "soft_de",
++                "evolve_kwargs": {"eta": 0.5, "temp_scale": 0.1},
+                 "accept": "greedy",
+                 "prior_ratio": False,
+                 "resample": "systematic",
+@@ -118,7 +134,8 @@
+                 **_base(K_BSMC, T, lam),
+                 "blocks": _blocks(T, 5),
+                 "evolve_window": W,
+-                "evolve_rule": "de",
++                "evolve_rule": "soft_de",
++                "evolve_kwargs": {"eta": 0.5, "temp_scale": 0.1},
+                 "accept": "greedy",
+                 "prior_ratio": False,
+                 "resample": None,
+--- a/experiments/exp_mppi_vibe/tests_particle.py
++++ b/experiments/exp_mppi_vibe/tests_particle.py
+@@ -155,10 +155,19 @@
+ 
+ def test_evolution_rules():
+     ok_all = True
+-    for rule, acc in [("mh", "mh"), ("de", "greedy"), ("de_best", "greedy"), ("pso", "greedy")]:
++    rules = [
++        ("mh", "mh", {}),
++        ("de", "greedy", {}),
++        ("de_best", "greedy", {}),
++        ("soft", "greedy", {"temp_scale": 1.0, "eta": 0.5, "sigma_scale": 0.25}),
++        ("soft_de", "greedy", {"temp_scale": 1.0, "eta": 0.5}),
++        ("pso", "greedy", {}),
++    ]
++    for rule, acc, ekw in rules:
+         c = BSMC_Jax_Debug(
+             X_D, U_D, dynamics, None, cost, bound, CV,
+             blocks=(8, 8, 8), evolve_window=1, evolve_rule=rule, accept=acc,
++            evolve_kwargs=ekw,
+             prior_ratio=(rule == "mh"), resample="systematic", island_size=50,
+             **COMMON,
+         )
+@@ -170,15 +179,48 @@
+         # move, which is the entire point of the correction
+         improves = (dcost <= 1e-6).all() if acc == "greedy" else True
+         ok = np.isfinite(np.asarray(u)).all() and acc_rate.size == 3 and improves
++        extra = ""
++        if "evolve_attract_ess" in diag:
++            extra = f", attract ESS {np.asarray(diag['evolve_attract_ess']).mean():.1f}"
++        if "evolve_attract_uniq" in diag:
++            extra += f", uniq attractors {np.asarray(diag['evolve_attract_uniq']).mean():.0f}"
+         ok_all &= _report(
+             f"evolve rule {rule!r}",
+             ok,
+             f"accept {acc_rate.round(2).tolist()}, mean dS {dcost.round(1).tolist()}, "
+-            f"uniq anc {n_anc}, ESS {float(diag['ess_final']):.1f}",
++            f"uniq anc {n_anc}, ESS {float(diag['ess_final']):.1f}{extra}",
+         )
+     return ok_all
+ 
+ 
++def test_soft_temperature_limits():
++    """
++    The informed attractor inherits MPPI's own temperature pathology in
++    miniature: sharp -> single best -> collapse, soft -> island mean -> nominal.
++    attract_ess is the knob's health check, and it must move monotonically.
++    """
++    out = {}
++    for ts in (0.05, 1.0, 50.0):
++        c = BSMC_Jax_Debug(
++            X_D, U_D, dynamics, None, cost, bound, CV,
++            blocks=(8, 8, 8), evolve_window=1, evolve_rule="soft_de",
++            accept="greedy", prior_ratio=False, resample="systematic",
++            island_size=50, evolve_kwargs={"temp_scale": ts, "eta": 0.5}, **COMMON,
++        )
++        _, _, _, diag = c.run_mpc(X0)
++        out[ts] = (
++            float(np.asarray(diag["evolve_attract_ess"]).mean()),
++            float(np.asarray(diag["evolve_attract_uniq"]).mean()),
++        )
++    esss = [out[t][0] for t in (0.05, 1.0, 50.0)]
++    ok = esss[0] < esss[1] < esss[2]
++    return _report(
++        "attract_ess increases monotonically with temp_scale",
++        ok,
++        ", ".join(f"ts={t}: ESS {out[t][0]:.1f} uniq {out[t][1]:.0f}" for t in out),
++    )
++
++
+ def test_window_depth():
+     """W=2 must re-evolve the older block; cost should not get worse than W=1."""
+     out = {}
+@@ -271,6 +313,7 @@
+         test_rbr_reduces_to_mppi(),
+         test_rbr_live(),
+         test_evolution_rules(),
++        test_soft_temperature_limits(),
+         test_tail_not_gathered(),
+         test_window_depth(),
+         test_no_resample_path(),

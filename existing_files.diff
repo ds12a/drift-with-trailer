@@ -1,0 +1,206 @@
+diff --git a/src/controllers/mpc/debug/mppi_jax_debug.py b/src/controllers/mpc/debug/mppi_jax_debug.py
+index ea8e28c..586b521 100644
+--- a/src/controllers/mpc/debug/mppi_jax_debug.py
++++ b/src/controllers/mpc/debug/mppi_jax_debug.py
+@@ -128,6 +128,7 @@ class MPPI_Jax_Debug:
+         step=0.02,
+         T=70,
+         history=None,
++        seed=0,
+         device="mps",
+     ):
+         """
+@@ -144,6 +145,9 @@ class MPPI_Jax_Debug:
+             K (int, optional): Samples. Defaults to 5000.
+             step (float, optional): Time step. Defaults to 0.02.
+             T (int, optional): Time horizon in steps. Defaults to 50.
++            seed (int, optional): PRNG seed. Defaults to 0, i.e. the previous
++                hardcoded behaviour. Needed for paired-seed sweeps: without it
++                run_sweep(n_seeds=n) re-runs one identical trajectory n times.
+         """
+         self.last_trajectory = None
+         self.u_history = jnp.zeros((T, u_d))
+@@ -168,7 +172,8 @@ class MPPI_Jax_Debug:
+ 
+         self.inv_cv = jnp.linalg.inv(self.cv)
+ 
+-        self.key = jax.random.key(0)
++        self.seed = seed
++        self.key = jax.random.key(seed)
+ 
+     def _forward_sim(self, x: ArrayLike, u: ArrayLike, noise: ArrayLike) -> jax.Array:
+         """
+diff --git a/src/controllers/mpc/mppi_jax.py b/src/controllers/mpc/mppi_jax.py
+index aba4ba3..1e43c90 100644
+--- a/src/controllers/mpc/mppi_jax.py
++++ b/src/controllers/mpc/mppi_jax.py
+@@ -114,6 +114,7 @@ class MPPI_Jax:
+         step=0.02,
+         T=70,
+         history=None,
++        seed=0,
+         device="mps",
+     ):
+         """
+@@ -130,6 +131,9 @@ class MPPI_Jax:
+             K (int, optional): Samples. Defaults to 5000.
+             step (float, optional): Time step. Defaults to 0.02.
+             T (int, optional): Time horizon in steps. Defaults to 50.
++            seed (int, optional): PRNG seed. Defaults to 0, i.e. the previous
++                hardcoded behaviour. Needed for paired-seed sweeps: without it
++                run_sweep(n_seeds=n) re-runs one identical trajectory n times.
+         """
+         self.last_trajectory = None
+         self.u_history = jnp.zeros((T, u_d))
+@@ -153,7 +157,8 @@ class MPPI_Jax:
+ 
+         self.inv_cv = jnp.linalg.inv(self.cv)
+ 
+-        self.key = jax.random.key(0)
++        self.seed = seed
++        self.key = jax.random.key(seed)
+ 
+     def _forward_sim(self, x: ArrayLike, u: ArrayLike, noise: ArrayLike) -> jax.Array:
+         """
+diff --git a/src/dynamics/trailer/trailer_bicycle_fiala.py b/src/dynamics/trailer/trailer_bicycle_fiala.py
+index 3479541..aa1cea8 100644
+--- a/src/dynamics/trailer/trailer_bicycle_fiala.py
++++ b/src/dynamics/trailer/trailer_bicycle_fiala.py
+@@ -27,6 +27,8 @@ def gen_util_funs(
+     s_weight=1e4,
+     c_weight=1e-2,
+     a_weight=1e5,
++    viol_weight=1e12,
++    with_violation=False,
+ ):
+     reverse = 1 if reverse else -1
+     step = params.simulation.dt
+@@ -400,7 +402,7 @@ def gen_util_funs(
+             # ) + p_weight * p_slow_weight * jnp.maximum(0, v_baseline - v_car)
+ 
+         c = (
+-            0.99**t * (1e12 * violation)
++            0.99**t * (viol_weight * violation)
+             + v_term
+             + combined_traction_penalty(x, u) * s_weight
+             + projection_curr.lateral_error**2 * c_weight
+@@ -410,10 +412,37 @@ def gen_util_funs(
+         # jax.debug.print("cost {c}", c=c)
+         return c
+ 
++    @jax.jit
++    def violation_fn(x):
++        """
++        Binary-feasibility indicator for RBR. > 0 iff the state is infeasible.
++
++        Deliberately a duplicate of the two `violation` terms inside `cost`
++        rather than a refactor of them: `cost` is left byte-for-byte unchanged so
++        no existing run can shift numerically, and the indicator cannot disagree
++        with the penalty because both are read off the same two expressions.
++        Uses `projection_curr` only -- the lookahead projection in `cost` feeds
++        `track_vel`, not the violation.
++        """
++        index = jnp.searchsorted(track._cumulative, x[9], side="right") - 1
++        projection_curr, _ = _project_to_track(x[0], x[1], index)
++
++        v = jnp.maximum(
++            0, jnp.abs(projection_curr.lateral_error) - (params.track.width * 0.5) * 0.9 + 0.1
++        )
++
++        hitch_angle = (x[2] - x[3] + jnp.pi) % (2 * jnp.pi) - jnp.pi
++        v += jnp.maximum(0, jnp.abs(hitch_angle) - params.vehicle.max_hitch)
++
++        return v
++
+     def bound(u):
+         return jnp.clip(u, jnp.array([-1, -1]), jnp.array([1, 1]))
+ 
+     def bound_der(u):
+         return u
+ 
++    if with_violation:
++        return dynamics, cost, bound, bound_der, violation_fn
++
+     return dynamics, cost, bound, bound_der
+diff --git a/src/simulation/rendering.py b/src/simulation/rendering.py
+index 001236c..9002624 100644
+--- a/src/simulation/rendering.py
++++ b/src/simulation/rendering.py
+@@ -413,6 +413,17 @@ class PyBulletMirrorRenderer:
+         pixels[~valid] = np.nan
+         return pixels
+ 
++    # Distinguishable at width-1 with low alpha; the last entry lines up with the
++    # trailing alpha island, which is the one that carries no nominal.
++    PLANNER_ISLAND_RGB = (
++        (84, 180, 255),
++        (120, 220, 140),
++        (255, 176, 92),
++        (200, 140, 255),
++        (255, 120, 150),
++        (150, 150, 150),
++    )
++
+     def _overlay_planner_debug(
+         self,
+         frame: np.ndarray,
+@@ -422,8 +433,6 @@ class PyBulletMirrorRenderer:
+     ) -> np.ndarray:
+         if planner_debug is None:
+             return frame
+-        image = Image.fromarray(frame.astype(np.uint8), mode="RGB").convert("RGBA")
+-        draw = ImageDraw.Draw(image, "RGBA")
+ 
+         candidate_xy = np.asarray(
+             planner_debug.get("candidate_xy", np.zeros((0, 0, 2), dtype=np.float32)),
+@@ -432,12 +441,45 @@ class PyBulletMirrorRenderer:
+         final_xy = np.asarray(
+             planner_debug.get("final_xy", np.zeros((0, 2), dtype=np.float32)), dtype=np.float32
+         )
++        if candidate_xy.size == 0 and final_xy.size == 0:
++            return frame
+ 
+-        for trajectory in candidate_xy:
+-            pixels = self._project_xy(trajectory, view, projection)
+-            pixels = pixels[np.all(np.isfinite(pixels), axis=1)]
+-            if len(pixels) >= 2:
+-                draw.line([tuple(point) for point in pixels], fill=(84, 180, 255, 46), width=1)
++        image = Image.fromarray(frame.astype(np.uint8), mode="RGB").convert("RGBA")
++        draw = ImageDraw.Draw(image, "RGBA")
++
++        if candidate_xy.size:
++            # One batched projection for the whole (n, T, 2) bundle rather than
++            # one 4x4 matrix build and matmul per trajectory.
++            n_traj, n_steps = candidate_xy.shape[0], candidate_xy.shape[1]
++            pixels = self._project_xy(
++                candidate_xy.reshape(-1, 2), view, projection
++            ).reshape(n_traj, n_steps, 2)
++
++            # Optional channels from build_planner_debug: per-trajectory MPPI
++            # weight sets brightness, island id sets hue. Absent -> the previous
++            # uniform blue.
++            weights = planner_debug.get("candidate_w")
++            weights = None if weights is None else np.asarray(weights, dtype=np.float32)
++            islands = planner_debug.get("candidate_island")
++            islands = None if islands is None else np.asarray(islands, dtype=np.int32)
++
++            for k in range(n_traj):
++                trajectory = pixels[k]
++                trajectory = trajectory[np.all(np.isfinite(trajectory), axis=1)]
++                if len(trajectory) < 2:
++                    continue
++
++                rgb = (
++                    self.PLANNER_ISLAND_RGB[int(islands[k]) % len(self.PLANNER_ISLAND_RGB)]
++                    if islands is not None
++                    else (84, 180, 255)
++                )
++                a = 46 if weights is None else int(28 + 200 * float(weights[k]))
++                draw.line(
++                    [tuple(point) for point in trajectory],
++                    fill=(rgb[0], rgb[1], rgb[2], a),
++                    width=1,
++                )
+ 
+         if len(final_xy) >= 2:
+             pixels = self._project_xy(final_xy, view, projection)

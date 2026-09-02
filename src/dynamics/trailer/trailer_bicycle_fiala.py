@@ -27,6 +27,8 @@ def gen_util_funs(
     s_weight=1e4,
     c_weight=1e-2,
     a_weight=1e5,
+    viol_weight=1e12,
+    with_violation=False,
 ):
     reverse = 1 if reverse else -1
     step = params.simulation.dt
@@ -400,20 +402,47 @@ def gen_util_funs(
             # ) + p_weight * p_slow_weight * jnp.maximum(0, v_baseline - v_car)
 
         c = (
-            0.99**t * (1e12 * violation)
+            0.98**t * (viol_weight * violation
             + v_term
             + combined_traction_penalty(x, u) * s_weight
             + projection_curr.lateral_error**2 * c_weight
-            + jnp.abs(hitch_angle) * a_weight
+            + jnp.abs(hitch_angle) * a_weight)
         )
 
         # jax.debug.print("cost {c}", c=c)
         return c
+
+    @jax.jit
+    def violation_fn(x):
+        """
+        Binary-feasibility indicator for RBR. > 0 iff the state is infeasible.
+
+        Deliberately a duplicate of the two `violation` terms inside `cost`
+        rather than a refactor of them: `cost` is left byte-for-byte unchanged so
+        no existing run can shift numerically, and the indicator cannot disagree
+        with the penalty because both are read off the same two expressions.
+        Uses `projection_curr` only -- the lookahead projection in `cost` feeds
+        `track_vel`, not the violation.
+        """
+        index = jnp.searchsorted(track._cumulative, x[9], side="right") - 1
+        projection_curr, _ = _project_to_track(x[0], x[1], index)
+
+        v = jnp.maximum(
+            0, jnp.abs(projection_curr.lateral_error) - (params.track.width * 0.5) * 0.9 + 0.1
+        )
+
+        hitch_angle = (x[2] - x[3] + jnp.pi) % (2 * jnp.pi) - jnp.pi
+        v += jnp.maximum(0, jnp.abs(hitch_angle) - params.vehicle.max_hitch)
+
+        return v
 
     def bound(u):
         return jnp.clip(u, jnp.array([-1, -1]), jnp.array([1, 1]))
 
     def bound_der(u):
         return u
+
+    if with_violation:
+        return dynamics, cost, bound, bound_der, violation_fn
 
     return dynamics, cost, bound, bound_der

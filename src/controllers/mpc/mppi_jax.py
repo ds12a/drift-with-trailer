@@ -114,6 +114,7 @@ class MPPI_Jax:
         step=0.02,
         T=70,
         history=None,
+        seed=0,
         device="mps",
     ):
         """
@@ -130,6 +131,9 @@ class MPPI_Jax:
             K (int, optional): Samples. Defaults to 5000.
             step (float, optional): Time step. Defaults to 0.02.
             T (int, optional): Time horizon in steps. Defaults to 50.
+            seed (int, optional): PRNG seed. Defaults to 0, i.e. the previous
+                hardcoded behaviour. Needed for paired-seed sweeps: without it
+                run_sweep(n_seeds=n) re-runs one identical trajectory n times.
         """
         self.last_trajectory = None
         self.u_history = jnp.zeros((T, u_d))
@@ -153,7 +157,8 @@ class MPPI_Jax:
 
         self.inv_cv = jnp.linalg.inv(self.cv)
 
-        self.key = jax.random.key(0)
+        self.seed = seed
+        self.key = jax.random.key(seed)
 
     def _forward_sim(self, x: ArrayLike, u: ArrayLike, noise: ArrayLike) -> jax.Array:
         """

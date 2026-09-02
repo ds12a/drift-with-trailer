@@ -1,11 +1,21 @@
 """
-Unified MPPI + SMPPI driver for trailer dynamics
+Unified MPPI / SMPPI / RBR / BSMC driver for trailer dynamics.
+
+Copied from exp_004_fiala_trailer_ice/utils and extended with the two
+particle controllers, a seed passthrough, and per-control-step diagnostics.
+exp_004 is deliberately left untouched.
 """
 
 from src.controllers.mpc.mppi_jax import MPPI_Jax
 from src.controllers.mpc.smppi_jax import SMPPI_Jax
+from src.controllers.mpc.rbr_jax import RBR_Jax
+from src.controllers.mpc.bsmc_jax import BSMC_Jax
 from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
 from src.controllers.mpc.debug.smppi_jax_debug import SMPPI_Jax_Debug
+from src.controllers.mpc.debug.rbr_jax_debug import RBR_Jax_Debug
+from src.controllers.mpc.debug.bsmc_jax_debug import BSMC_Jax_Debug
+
+from experiments.exp_mppi_vibe.utils.particle_diag import ParticleDiag
 
 from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs
 import time
@@ -19,14 +29,28 @@ import itertools
 
 import jax.numpy as jnp
 
-def build_planner_debug(all_samples, n_vis):
+def build_planner_debug(all_samples, n_vis, weights=None, islands=None):
+    """
+    Subsample candidate rollouts for the overlay.
+
+    Extends the exp_004 version with two optional channels the renderer uses to
+    colour the lines: per-trajectory MPPI weight (brightness) and island id
+    (hue). Both are subsampled with the same index set so they stay aligned, and
+    everything is reduced on device before the single host transfer.
+    """
     if all_samples is None:
         return None
     K = all_samples.shape[0]
     n = int(min(n_vis, K))
     idx = jnp.linspace(0, K - 1, n).astype(jnp.int32)      # even spread across samples
-    cand = np.asarray(all_samples[idx, :, :2])             # (n, T, 2), small transfer
-    return {"candidate_xy": cand}
+    out = {"candidate_xy": np.asarray(all_samples[idx, :, :2])}   # (n, T, 2)
+
+    if weights is not None:
+        w = jnp.asarray(weights)[idx]
+        out["candidate_w"] = np.asarray(w / jnp.maximum(w.max(), 1e-30))
+    if islands is not None:
+        out["candidate_island"] = np.asarray(jnp.asarray(islands)[idx])
+    return out
 
 
 def run_mpc(
@@ -43,6 +67,8 @@ def run_mpc(
     max_steps=None,
     print_name=None,
     record_file_name=None,
+    seed=0,
+    diag_file=None,
 ):
     """
     ctl_args for MPPI is only covariance. For SMPPI is covariance and omega.
@@ -70,29 +96,57 @@ def run_mpc(
 
     env.reset()
 
-    dynamics, cost, bound, bound_der = gen_util_funs(
-        env.unwrapped.scenario, 
+    dynamics, cost, bound, bound_der, violation = gen_util_funs(
+        env.unwrapped.scenario,
+        with_violation=True,
         **cost_kwargs
     )
 
+    # RBR and BSMC take a seed so paired-seed sweeps are actually paired; SMPPI
+    # does not have the kwarg, so it is only injected where it is supported.
+    ctl_kwargs = dict(ctl_kwargs)
+    if controller in ("MPPI", "RBR", "BSMC"):
+        ctl_kwargs.setdefault("seed", seed)
+
     if controller == "MPPI":
         ctl_args = (6, 2, dynamics, None, cost, bound, *ctl_args)
-        
+
         if debug:
-            # print("Using MPPI")
             mpc = MPPI_Jax_Debug(*ctl_args, **ctl_kwargs)
         else:
             mpc = MPPI_Jax(*ctl_args, **ctl_kwargs)
+    elif controller == "RBR":
+        # violation_func goes before cv, mirroring where SMPPI puts bound_der
+        ctl_args = (6, 2, dynamics, None, cost, bound, violation, *ctl_args)
+
+        if debug:
+            mpc = RBR_Jax_Debug(*ctl_args, **ctl_kwargs)
+        else:
+            mpc = RBR_Jax(*ctl_args, **ctl_kwargs)
+    elif controller == "BSMC":
+        ctl_args = (6, 2, dynamics, None, cost, bound, *ctl_args)
+
+        if debug:
+            mpc = BSMC_Jax_Debug(*ctl_args, **ctl_kwargs)
+        else:
+            mpc = BSMC_Jax(*ctl_args, **ctl_kwargs)
     else:
         # Assume SMPPI
         ctl_args = (6, 2, dynamics, None, cost, bound, bound_der, *ctl_args)
 
         if debug:
-            # print("Using SMPPI")
             mpc = SMPPI_Jax_Debug(*ctl_args, **ctl_kwargs)
         else:
             mpc = SMPPI_Jax(*ctl_args, **ctl_kwargs)
+
+    diag_log = ParticleDiag(controller, diag_file) if diag_file is not None else None
     
+
+    island_id = None
+    if getattr(mpc, "islands", None) is not None:
+        island_id = np.concatenate(
+            [np.full(n, m, dtype=np.int32) for m, n in enumerate(mpc.islands)]
+        )
 
     observation, reward, terminated, truncated, info = env.step(jnp.zeros(3))
 
@@ -116,9 +170,12 @@ def run_mpc(
                 ]
             )
 
-            xhist = None
+            xhist, diag = None, None
             if debug:
-                u, xhist, *_ = mpc.run_mpc(mpc_state)
+                out = mpc.run_mpc(mpc_state)
+                u, xhist = out[0], out[1]
+                if len(out) > 3:
+                    diag = out[3]
             else:
                 u = mpc.run_mpc(mpc_state)
             
@@ -157,8 +214,18 @@ def run_mpc(
 
             action = jnp.array([u[0], u[1]])
 
-            n_viz = 50    
-            env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz) if debug else None
+            n_viz = 50
+            env.unwrapped.planner_debug = (
+                build_planner_debug(xhist, n_viz, islands=island_id) if debug else None
+            )
+
+            if diag_log is not None and diag is not None:
+                diag_log.add(
+                    i,
+                    float(env.unwrapped.track._arc_samples[env.unwrapped._last_index]),
+                    float(state.vx),
+                    diag,
+                )
 
             observation, reward, terminated, truncated, info = env.step(action)
 
@@ -171,6 +238,9 @@ def run_mpc(
         pass
 
     env.close()
+
+    if diag_log is not None:
+        diag_log.save()
 
     if benchmark:
         cutoff = 100
@@ -186,4 +256,3 @@ def run_mpc(
             f"Avg alpha_r: {jnp.mean(jnp.array(slip_angles_r[cutoff:]))}, "
             f"Avg yaw_rate: {jnp.mean(jnp.array(yaw_rates[cutoff:]))}"
     )
-
