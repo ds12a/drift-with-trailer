@@ -77,6 +77,7 @@ _, state = nnx.split(model)
 ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
+
     ckpt.restore(
         Path.cwd() / "src/learning/models/trained/beamng-l4-128-test8_best",
         state,

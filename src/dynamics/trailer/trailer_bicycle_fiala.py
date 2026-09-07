@@ -383,7 +383,7 @@ def gen_util_funs(
 
         hitch_angle = wrap_angle(x[2] - x[3])
 
-        violation += jnp.maximum(0, jnp.abs(hitch_angle) - params.vehicle.max_hitch)
+        violation += (jnp.abs(hitch_angle) - params.vehicle.max_hitch)**2
 
         max_safe_v = (
             jnp.sqrt(1.0 * 1.5 * 9.8 / (projection_next.curvature + 1e-5)) + 1e7

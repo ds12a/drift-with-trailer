@@ -79,8 +79,8 @@ bng_pickup_trailer_cfg = VehicleConfig(
     hitch_offset=2.0,  # CG to hitch ball at rear bumper (~lr + 0.35m)
     max_hitch=np.deg2rad(80),
 )
-
-
+import beamngpy
+print(beamngpy.__version__)
 class BeamNGTrailerEnv(gym.Env):
     metadata = {
         "render_modes": ["human", "rgb_array_follow", "rgb_array_birds_eye"],
@@ -158,7 +158,7 @@ class BeamNGTrailerEnv(gym.Env):
 
         # tech_ground for no ice, snow_1 for ice
         # place the zip in BeamNG_ROOT/content/levels
-        scenario = Scenario("slope_1", "Barcelona")
+        scenario = Scenario("tech_ground", "Barcelona")
         self.scenario = scenario
         material = "road_asphalt_2lane"
         CHUNK_SIZE = 30
@@ -278,9 +278,12 @@ class BeamNGTrailerEnv(gym.Env):
         yaw -= np.pi / 2
         return (0.0, 0.0, np.cos(yaw / 2), np.sin(yaw / 2))  # terrible
 
-    def _initial_beamng_state(self):
+    def _initial_beamng_state(self, start_index=None):
         centerline = self.track.centerline
-        index = np.random.randint(0, len(centerline)) if self.config.simulation.random_start else 0
+        if start_index is not None:
+            index = int(start_index)
+        else:
+            index = np.random.randint(0, len(centerline)) if self.config.simulation.random_start else 0
 
         spawn_z = self._query_terrain_height(*centerline[index])
 
@@ -290,7 +293,7 @@ class BeamNGTrailerEnv(gym.Env):
         dx, dy = (centerline[(index + 1) % len(centerline)] - centerline[index])[:2]
         yaw = np.arctan2(dy, dx)
 
-        if self.config.simulation.random_start:
+        if self.config.simulation.random_start and start_index is None:
             yaw += (np.random.random() - 0.5) * 2 * 0.1
 
         tangent = np.array([np.cos(yaw), np.sin(yaw), 0])
@@ -300,8 +303,8 @@ class BeamNGTrailerEnv(gym.Env):
         trailer_xyz = tractor_xyz - tangent * l + normal * trailer_off
         return tractor_xyz, trailer_xyz, yaw
 
-    def _initial_env_state(self) -> VehicleState:
-        tractor_xyz, _, yaw = self._initial_beamng_state()
+    def _initial_env_state(self, start_index=None) -> VehicleState:
+        tractor_xyz, _, yaw = self._initial_beamng_state(start_index)
         return VehicleState(
             *tractor_xyz[:2],
             yaw,
@@ -393,8 +396,9 @@ class BeamNGTrailerEnv(gym.Env):
     ):
         super().reset(seed=seed)
 
-        self._state = self._initial_env_state()
-        tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state()
+        start_index = options.get("start_index") if options else None
+        self._state = self._initial_env_state(start_index)
+        tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state(start_index)
         yaw_quat = BeamNGTrailerEnv.yaw_to_quat(yaw)
 
         self.tractor.teleport(
