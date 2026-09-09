@@ -38,10 +38,10 @@ logging.getLogger("beamngpy").setLevel(logging.WARNING)
 logging.getLogger("beamngpy").propagate = False
 
 # Reverse/fwd configs should be automated
-V_TARGET = -60 / 3.6
+V_TARGET = -30 / 3.6
 
 config = BeamNGTrailerEnvConfig(
-    ".", TrackConfig(mu=0.5, width=30), bng_pickup_trailer_cfg, SimulationConfig()
+    ".", TrackConfig(mu=1.0, width=45), bng_pickup_trailer_cfg, SimulationConfig()
 )
 
 # config.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
@@ -59,6 +59,7 @@ def build_planner_debug(all_samples, n_vis):
 
 env = BeamNGTrailerEnv(
     config=config,
+    # use_custom_mu=False,
 )
 
 
@@ -67,6 +68,23 @@ bng_log.propagate = False                      # stop feeding orbax's root handl
 h = logging.StreamHandler()
 h.setLevel(logging.WARNING)
 bng_log.addHandler(h)
+
+# fwd_weights = {
+#     "p_weight": 1e2,
+#     "p_slow_weight": 1e0,
+#     "c_weight": 1e0,
+#     "a_weight": 7e2,
+#     "v_target": V_TARGET,
+#     "reverse": False,
+# }
+# rev_weights = {
+#     "p_weight": 1e1,
+#     "p_slow_weight": 1e0,
+#     "c_weight": 5e1,
+#     "a_weight": 2e2,
+#     "v_target": V_TARGET,
+#     "reverse": False,
+# }
 
 fwd_weights = {
     "p_weight": 1e2,
@@ -79,8 +97,8 @@ fwd_weights = {
 rev_weights = {
     "p_weight": 2e1,
     "p_slow_weight": 1e0,
-    "c_weight": 5e1,
-    "a_weight": 2e2,
+    "c_weight": 0e1,
+    "a_weight": 1e2,
     "v_target": V_TARGET,
     "reverse": False,
 }
@@ -124,8 +142,8 @@ else:
         bound,
         jnp.diag(jnp.array([1e-2, 0.2])),
         # inverse_temp=5e2,
-        inverse_temp=0.5,
-        K=2000,
+        inverse_temp=50,
+        K=500,
         step=0.05,
         T=55,
         alpha=0.01,
@@ -135,6 +153,7 @@ else:
 # env = RecordVideo(env, video_folder="gym_videos", episode_trigger=lambda x: True, disable_logger=True, name_prefix=fname)
 
 env.reset()
+time.sleep(30)
 observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
 # history = jnp.zeros(HISTORY * (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM))
@@ -188,8 +207,8 @@ try:
 
         action = jnp.array([-u[0], u[1]])
 
-        n_viz = 10    
-        env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
+        # n_viz = 10    
+        # env.unwrapped.planner_debug = build_planner_debug(xhist, n_viz)
 
         observation, reward, terminated, truncated, info = env.step(action)
     cutoff = 100

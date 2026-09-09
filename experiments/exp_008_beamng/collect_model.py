@@ -35,6 +35,7 @@ import json
 
 from src.learning.models.trailer_nn import TrailerModel
 from src.learning.models.beamng_trailer_spec import STATE_FS, fiala_dyn, IN_COLS
+from src.learning.models.beamng_model_spec import STATE_FS
 from src.dynamics.trailer.beamng_dynamics import (
     gen_util_funs as res_util,
     D_STATE_DIM,
@@ -49,6 +50,11 @@ import logging
 absl.logging.set_verbosity(absl.logging.WARNING)
 logging.getLogger("beamngpy").setLevel(logging.WARNING)
 logging.getLogger("beamngpy").propagate = False
+
+STALL_VEL = 0.5
+STALL_WINDOW = 40
+STALL_ARC = 1.0
+STALL_GRACE = 100
 
 
 def build_planner_debug(all_samples, n_vis):
@@ -65,12 +71,12 @@ def build_planner_debug(all_samples, n_vis):
 
 spec = STATE_FS
 kin_fn = fiala_dyn
-HISTORY = spec.H
+HISTORY = 4
 scenario = BeamNGTrailerEnvConfig   (
     ".", TrackConfig(mu=1.0, width=15), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
 )
 
-NPZ_SAVE_HEAD = "data_proc_test6"
+NPZ_SAVE_HEAD = "data_proc_test9"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 
 with open(Path(JSON_PTH), "r") as f:
@@ -78,23 +84,25 @@ with open(Path(JSON_PTH), "r") as f:
 
 scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
-model = TrailerModel(spec.H * len(IN_COLS), 6)
+model = TrailerModel(4 * len(IN_COLS), 6)
 _, state = nnx.split(model)
 ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
     ckpt.restore(
-        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test6_best",
+        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test8_best",
         state,
     ),
 )
-def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, mpc_lowspeed: MPPI_Jax | MPPI_Jax_Debug, data: DataCollector, env_i, ctl_i, run_i, noise_stdev = 0.1, steps=2000):
+
+def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, data: DataCollector, env_i, ctl_i, run_i, noise_stdev = 0.1, steps=2000, mirror=False):
     env.reset()
     observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
     # history = jnp.zeros(HISTORY * (D_STATE_DIM + D_U_DIM + D_EXTRA_DIM))
     history = jnp.zeros(HISTORY * 13)
-    speeds, slip_angles_f, slip_angles_r, yaw_rates = [], [], [], []
+    speeds, arc_lengths = [], []
+    slip_angles_f, slip_angles_r, yaw_rates = [], [], []
     i = 0
     t = 0
 
@@ -105,7 +113,6 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, mpc_lowspeed:
 
 
         for _ in range(HISTORY):
-            # print("here") 
             u = jnp.array([0.0, -0.35])
             action = np.array(u)
             observation, reward, terminated, truncated, info = env.step(action)
@@ -127,14 +134,20 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, mpc_lowspeed:
                     env.unwrapped.track._arc_samples[env.unwrapped._last_index],
                 ]
             )
-
-        mpc_u_traj = mpc.last_trajectory
+            
         for i in range(steps):
             # print(terminated)
             if terminated:
                 # print(np.array(traj).shape)
                 if len(traj) > 0:  # Should impl larger cutoff
                     data.add(np.array(traj), env_i, ctl_i, 0)
+
+                    if mirror:
+                        mirrored = np.array(traj)
+                        mirrored[:, [0, 3, 4, 5, 7, 9]] *= -1   
+                        data.add(mirrored, env_i, ctl_i, 0)
+
+
                 traj = []
                 t += 1
                 run_i += 1
@@ -142,7 +155,7 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, mpc_lowspeed:
                 #     break
                 env.reset()
                 mpc.reset()
-                break # No pertubation reverse currently so no data dupe is good
+                break
                 mpc_u_traj = None
                 observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
@@ -183,49 +196,10 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, mpc_lowspeed:
                 ]
             )
             
-            if abs(state.vx) > 2.5:
-                mpc.last_trajectory = mpc_u_traj
-                u, xhist, vhist = mpc.run_mpc(history)
-                u.block_until_ready()
-                mpc_u_traj = mpc.last_trajectory
-            else:
-                if mpc_u_traj is not None:
-                    mpc_lowspeed.last_trajectory = mpc_u_traj.at[:, 0].set(-mpc_u_traj[:, 0])
-                u, xhist, vhist = mpc_lowspeed.run_mpc(mpc_state)
-                u.block_until_ready()
-                mpc_u_traj = mpc_lowspeed.last_trajectory
-                mpc_u_traj = mpc_u_traj.at[:, 0].set(-mpc_u_traj[:, 0])
-                u = jnp.array([-u[0], u[1]])
-            
+            u, xhist, vhist = mpc.run_mpc(history)
             u.block_until_ready()
 
             elapsed = time.perf_counter() - start
-            
-            speeds.append(jnp.hypot(state.vx, state.vy))
-            yaw_rates.append(state.yaw_truck_rate)
-
-            vx_safe = jnp.maximum(jnp.abs(state.vx), 0.5)
-            # steer_angle = state.steer * env.unwrapped.config.vehicle.max_steer_rad
-            # alpha_f = steer_angle - jnp.arctan2(
-            #     state.vy + env.unwrapped.config.vehicle.lf * state.yaw_truck_rate, vx_safe
-            # )
-            # alpha_r = -jnp.arctan2(
-            #     state.vy - env.unwrapped.config.vehicle.lr * state.yaw_truck_rate, vx_safe
-            # )
-
-            # slip_angles_f.append(alpha_f)
-            # slip_angles_r.append(alpha_r)
-
-            # print(
-            #     f"Step: {i:<5d} | "
-            #     f"Time: {elapsed:<7.3f} | "
-            #     f"u: {u[0]:<7.3f} {u[1]:<7.3f} | "
-            #     # f"Prog: {state.progress:<6.3f} | "
-            #     f"vx: {state.vx:<7.3f} | "
-            #     f"vy: {state.vy:<7.3f} | "
-            #     f"|v|: {jnp.hypot(state.vx, state.vy):<7.3f} | "
-            #     f"mu: {env.unwrapped.track.find_mu(state.x, state.y):<7.3f} | "
-            # )
             i += 1
 
             action = jnp.array([u[0], u[1]])
@@ -277,9 +251,20 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, mpc_lowspeed:
 
             current_state = env.unwrapped._state
             curr = jnp.concatenate(
-                [jnp.array([*astuple(current_state)[:10]]), jnp.array([u[0], u[1]]), jnp.array([env.unwrapped.track._arc_samples[env.unwrapped._last_index]])]
+                [jnp.array([*astuple(current_state)[:10]]), jnp.array([action[0], action[1]]), jnp.array([env.unwrapped.track._arc_samples[env.unwrapped._last_index]])]
             )
             history = jnp.concatenate([history[13:], curr])
+
+            speeds.append(float(np.hypot(current_state.vx, current_state.vy)))
+            arc_lengths.append(float(env.unwrapped.track._arc_samples[env.unwrapped._last_index]))
+            if i >= STALL_GRACE and len(speeds) > STALL_WINDOW:
+                slow = np.mean(speeds[-STALL_WINDOW:]) < STALL_VEL
+                arc_delta = arc_lengths[-1] - arc_lengths[-STALL_WINDOW]
+                track_length = env.unwrapped.track.length
+                arc_delta = (arc_delta + track_length / 2) % track_length - track_length / 2
+                if slow and abs(arc_delta) < STALL_ARC:
+                    print("\nStall detected; ending collection run.")
+                    break
 
             mpc_state = jnp.array(
                 [
@@ -313,159 +298,126 @@ def run_mpc(env: BeamNGTrailerEnv, mpc: MPPI_Jax | MPPI_Jax_Debug, mpc_lowspeed:
 
 # Reverse/fwd configs should be automated
 
-env = BeamNGTrailerEnv(
-    config=scenario,
-)
-
 d = DataCollector(11, 0.05)
 
 vels = []
 # for v in range(25, 125, 10):
 #     vels.append(v)
 #     vels.append(-v)
-vels = [-40, -50, -60, -70, -80, -90, -100]
+vels = [-40, -45, -50,]
 
-controllers = []
-slow_controllers = []
+fwd_weights = {
+    "p_weight": 1e2,
+    "p_slow_weight": 1e0,
+    "c_weight": 5e1,
+    "a_weight": 7e2,
+    "reverse": False,
+}
+rev_weights = {
+    "p_weight": 2e1,
+    "p_slow_weight": 1e0,
+    "c_weight": 5e1,
+    "a_weight": 5e2,
+    "reverse": False,
+}
 
 
-# Maybe k=20 will be more noisy
-for v in vels:
-    V_TARGET = v / 3.6  # to m/s
+mus = [0.4, 0.6, 0.8, 1.0]
+for env_i, m in enumerate(mus):
 
-    fwd_weights = {
-        "p_weight": 1e2,
-        "p_slow_weight": 1e0,
-        "c_weight": 1e0,
-        "a_weight": 7e2,
-        "v_target": V_TARGET,
-        "reverse": False,
-    }
-    rev_weights = {
-        "p_weight": 2e1,
-        "p_slow_weight": 1e0,
-        "c_weight": 5e1,
-        "a_weight": 2e2,
-        "v_target": V_TARGET,
-        "reverse": False,
-    }
-        
-    if V_TARGET > 0:
-        dynamics, cost, bound, bound_der = res_util(
-            scenario,
-            spec,
-            kin_fn,
-            model,
-            norm_stats,
-            **fwd_weights,
-        )
-        mpc = MPPI_Jax_Debug(
-            13,
-            2,
-            dynamics,
-            None,
-            cost,
-            bound,
-            # bound_der,
-            jnp.diag(jnp.array([7e-2, 0.2])),
-            inverse_temp=150,
-            # inverse_temp=10,
-            K=500,
-            step=0.05,
-            T=80,
-            alpha=0.01,
-            gamma=0.0,
-            history=HISTORY,
-        )
-        dynamics, cost, bound, bound_der = prior_util(
-            scenario,
-            s_weight=0,
-            **fwd_weights,
-        )
-        mpc_lowspeed = MPPI_Jax_Debug(
-            6,
-            2,
-            dynamics,
-            None,
-            cost,
-            bound,
-            # bound_der,
-            jnp.diag(jnp.array([3e-3, 0.2])),
-            # jnp.diag(jnp.array([1e-2, 1e-1])),
-            inverse_temp=0.5,
-            K=500,
-            step=0.05,
-            T=80,
-            alpha=0.05,
-        )
+    controllers = []
+
+    config = BeamNGTrailerEnvConfig(
+        ".", TrackConfig(mu=m, width=15), bng_pickup_trailer_cfg, SimulationConfig()
+    )
+
+    # config.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
+
+    for V_TARGET in vels:
+        V_TARGET /= 3.6  # to m/s
+        # for gen_util_funs in [straight_fn]:
+
+        # if V_TARGET > 0:
+        #     gen_util_funs = sin_fn
+        # else:
+        #     gen_util_funs = straight_fn
+
+            
+        if V_TARGET > 0:
+            
+            dynamics, cost, bound, bound_der = res_util(
+                scenario,
+                spec,
+                kin_fn,
+                model,
+                norm_stats,
+                v_target=V_TARGET,
+                **fwd_weights,
+            )
+            mpc = MPPI_Jax_Debug(
+                13,
+                2,
+                dynamics,
+                None,
+                cost,
+                bound,
+                # bound_der,
+                jnp.diag(jnp.array([7e-2, 0.2])),
+                inverse_temp=150,
+                # inverse_temp=10,
+                K=500,
+                step=0.05,
+                T=80,
+                alpha=0.01,
+                gamma=0.0,
+                history=HISTORY,
+            )
+
+        else:
+            dynamics, cost, bound, bound_der = res_util(
+                scenario,
+                spec,
+                kin_fn,
+                model,
+                norm_stats,
+                v_target=V_TARGET,
+                **rev_weights,
+            )
+            mpc = MPPI_Jax_Debug(
+                13,
+                2,
+                dynamics,
+                None,
+                cost,
+                bound,
+                jnp.diag(jnp.array([2e-2, 0.2])),
+                inverse_temp=100,
+                # inverse_temp=10,
+                K=500,
+                step=0.05,
+                T=75,
+                alpha=0.01,
+                gamma=0.0,
+                history=HISTORY,
+            )
         controllers.append(mpc)
-        slow_controllers.append(mpc_lowspeed)
 
-    else:
-        dynamics, cost, bound, _ = res_util(
-            scenario,
-            spec,
-            kin_fn,
-            model,
-            norm_stats,
-            **rev_weights,
-        )
-        mpc = MPPI_Jax_Debug(
-            13,
-            2,
-            dynamics,
-            None,
-            cost,
-            bound,
-            jnp.diag(jnp.array([7e-2, 0.2])),
-            inverse_temp=150,
-            # inverse_temp=10,
-            K=500,
-            step=0.05,
-            T=55,
-            alpha=0.01,
-            gamma=0.0,
-            history=HISTORY,
-        )
-        dynamics, cost, bound, bound_der = prior_util(
-            scenario,
-            s_weight=0,
-            **rev_weights,
-        )
-        mpc_lowspeed = MPPI_Jax_Debug(
-            6,
-            2,
-            dynamics,
-            None,
-            cost,
-            bound,
-            jnp.diag(jnp.array([1e-2, 0.2])),
-            # inverse_temp=5e2,
-            inverse_temp=0.5,
-            K=1500,
-            step=0.05,
-            T=55,
-            alpha=0.01,
-        )
-        controllers.append(mpc)
-        slow_controllers.append(mpc_lowspeed)
+    for i, c in enumerate(controllers):
 
-# Prelim run with full friction
-
-for i, c in enumerate(controllers):
-    run_i = 0
-    # for j in range(4):
-    if vels[i] > 0:
-        run_i = run_mpc(env, c, slow_controllers[i], d, 0, i, run_i, noise_stdev=0.3, steps=4000)  # run_i in case several trials of the same
-    else:
-        run_i = run_mpc(env, c, slow_controllers[i], d, 0, i, run_i, noise_stdev=0.0, steps=2000)  # run_i in case several trials of the same
+        run_i = 0
+        env = BeamNGTrailerEnv(config=config)
+        # for j in range(4):
+        if vels[i] > 0:
+            run_i = run_mpc(env, c, d, env_i, i, run_i, noise_stdev=0.3, steps=1000)  # run_i in case several trials of the same
+        else:
+            run_i = run_mpc(env, c, d, env_i, i, run_i, noise_stdev=0.0, steps=1500, mirror=True)  # run_i in case several trials of the same
 
 # ds = d.store(STATE_FS.data_version, verbose=True)
 
-load = DataStore.load(Path("experiments/exp_008_beamng/data_trial2_aug2.npz"))
+load = DataStore.load(Path("experiments/exp_008_beamng/data_trial3_aug1v2.npz"))
 print(load.data.shape)
 load.ingest(d)
 print(load.data.shape)
-load.save("experiments/exp_008_beamng/data_trial2_aug3.npz")
+load.save("experiments/exp_008_beamng/data_trial3_aug1v3.npz")
 
 # ds.save(Path("./experiments/exp_008_beamng/data_trial2.npz"))

@@ -40,3 +40,5 @@ gym_videos
 src/learning/models/trained/
 *.bak
 wandb/
+divergence_out
+sweep_out

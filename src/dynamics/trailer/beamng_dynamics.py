@@ -287,6 +287,12 @@ def gen_util_funs(
             v_term = p_weight * jnp.abs(
                 v_target + reverse * jnp.abs(track_vel) * jnp.sign(vx)
             )
+
+            # term without loophole fix
+            # v_term = p_weight * jnp.abs(
+            #     v_target + track_vel
+            # )
+
             # v_baseline = jnp.minimum(max_safe_v, v_target)
             # # If v is above threshold use actual car velocity instead of track velocity to stop cheating
             # v_car = jnp.where(nominal_v > max_safe_v, nominal_v, track_vel)
@@ -299,7 +305,7 @@ def gen_util_funs(
             (1e7 * violation)
             + v_term
             + projection_curr.lateral_error**2 * c_weight
-            + jnp.abs(hitch_angle) * a_weight
+            + hitch_angle ** 2 * a_weight
         )
 
         # jax.debug.print("cost {c}", c=c)

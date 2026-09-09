@@ -49,14 +49,14 @@ from src.learning.models.beamng_trailer_spec import (
     FD_COLS,
     V,
 )
-from src.learning.models.beamng_model_spec import STATE_FS
+
 # ----------------------------------------------------------------------------
 # config
 # ----------------------------------------------------------------------------
 
-DATA = Path("experiments/exp_008_beamng/data_trial3_aug1.npz")
-STATS = Path("experiments/exp_008_beamng/data_proc_test9_stats.json")
-CKPT = Path.cwd() / "src/learning/models/trained/beamng-l4-128-test9_best"
+DATA = Path("experiments/exp_008_beamng/data_trial2_aug.npz")
+STATS = Path("experiments/exp_008_beamng/data_proc_test5_stats.json")
+CKPT = Path.cwd() / "src/learning/models/trained/beamng-l4-128-test5_best"
 OUT = Path("experiments/exp_008_beamng/divergence_out")
 
 K = 55  # rollout steps; match the deploy horizon T
@@ -142,7 +142,7 @@ def make_rollout(model, prior_fn, x_mean, x_std, y_mean, y_std, H, k, dt):
             x = ((buf.reshape(-1) - x_mean) / x_std)[None, :]
             pred = model(x)[0] * y_std + y_mean
             # buf[:, :8] is exactly X_COLS order by construction of IN_COLS
-            # pred = pred + jnp.concatenate([prior_fn(buf[-1, :8]), jnp.zeros(2)])
+            pred = pred + jnp.concatenate([prior_fn(buf[-1, :8]), jnp.zeros(2)])
             ax, ay, a1, a2, dds, das = pred
 
             vx, vy = buf[-1, 2], buf[-1, 3]
@@ -465,7 +465,7 @@ def main():
         print("  WARNING: y_std[2:4] looks like rate stats, not accelerations -- "
               "stale normalisation for this spec")
 
-    model = TrailerModel(STATE_FS.H * len(IN_COLS), 6)
+    model = TrailerModel(STATE_FS.H * len(IN_COLS), 6, total=(STATE_FS.H * len(IN_COLS), 128, 128, 64, 64, 6))
     _, state = nnx.split(model)
     nnx.update(model, ocp.StandardCheckpointer().restore(CKPT, state))
 

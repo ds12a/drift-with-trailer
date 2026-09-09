@@ -55,22 +55,22 @@ import json
 jnp.set_printoptions(precision=2, suppress=True)
 
 # Reverse/fwd configs should be automated
-V_TARGET = -40 / 3.6
+V_TARGET = -50 / 3.6
 
 spec = STATE_FS
 kin_fn = fiala_dyn
 HISTORY = spec.H
 scenario = BeamNGTrailerEnvConfig   (
-    ".", TrackConfig(mu=0.5, width=25), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
+    ".", TrackConfig(mu=1.0, width=15), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
 )
 
-NPZ_SAVE_HEAD = "data_proc_test8"
+NPZ_SAVE_HEAD = "data_proc_test9-new"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 
 with open(Path(JSON_PTH), "r") as f:
     norm_stats = json.load(f)
 
-scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
+# scenario.track.friction_csv = "src/simulation/assets/tracks/barcelona_ice.csv"
 
 model = TrailerModel(spec.H * len(IN_COLS), 6)
 _, state = nnx.split(model)
@@ -78,7 +78,7 @@ ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
     ckpt.restore(
-        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test8_best",
+        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test9-new_best",
         state,
     ),
 )
@@ -96,13 +96,16 @@ def build_planner_debug(all_samples, n_vis):
 
 env = BeamNGTrailerEnv(
     config=scenario,
+    use_custom_mu=False,
+    spidx= 1500,
+    dir=1
 )
 
 fwd_weights = {
-    "p_weight": 1e2,
+    "p_weight": 2e1,
     "p_slow_weight": 1e0,
-    "c_weight": 1e0,
-    "a_weight": 7e2,
+    "c_weight": 5e1,
+    "a_weight": 1e2,
     "v_target": V_TARGET,
     "reverse": False,
 }
@@ -110,10 +113,19 @@ rev_weights = {
     "p_weight": 5e1,
     "p_slow_weight": 1e0,
     "c_weight": 5e1,
-    "a_weight": 1e2,
+    "a_weight": 2e2,
     "v_target": V_TARGET,
     "reverse": False,
 }
+
+# rev_weights = {
+#     "p_weight": 2e1,
+#     "p_slow_weight": 1e0,
+#     "c_weight": 0e1,
+#     "a_weight": 1e2,
+#     "v_target": V_TARGET,
+#     "reverse": False,
+# }
 
 if V_TARGET > 0:
     dynamics, cost, bound, bound_der = res_util(
@@ -133,7 +145,7 @@ if V_TARGET > 0:
         bound,
         # bound_der,
          jnp.diag(jnp.array([7e-2, 0.2])),
-        inverse_temp=150,
+        inverse_temp=100,
         # inverse_temp=10,
         K=500,
         step=0.05,
@@ -180,12 +192,12 @@ else:
         None,
         cost,
         bound,
-        jnp.diag(jnp.array([2e-2, 0.2])),
-        inverse_temp=100,
+        jnp.diag(jnp.array([1e-2, 0.2])),
+        inverse_temp=500,
         # inverse_temp=10,
-        K=1500,
+        K=500,
         step=0.05,
-        T=65,
+        T=75,
         alpha=0.01,
         gamma=0.0,
         history=HISTORY,
@@ -215,6 +227,7 @@ else:
 # env = RecordVideo(env, video_folder="gym_videos", episode_trigger=lambda x: True, disable_logger=True, name_prefix=fname)
 
 env.reset()
+# time.sleep(15)
 observation, reward, terminated, truncated, info = env.step(jnp.zeros(2))
 
 history = jnp.zeros(HISTORY * 13)
