@@ -212,6 +212,10 @@ class BeamNGTrailerEnv(gym.Env):
 
         bng.control.pause()
 
+        # Scenario placement/BeamNGpy's cling flag does not guarantee slope
+        # alignment. Use the engine's footprint-based ground placement too.
+        self._place_on_terrain(tractor_xyz, trailer_xyz, yaw)
+
         # self.bng.step(60)
         # self.tractor.couplers.attach()
         # self.tractor.queue_lua_command(
@@ -312,7 +316,32 @@ class BeamNGTrailerEnv(gym.Env):
         l = 8.0
         trailer_off = -0.175  # Trailer seems a bit off on spawn pose, probably xyz calc from random node rather than center
         trailer_xyz = tractor_xyz - tangent * l + normal * trailer_off
+        trailer_xyz[2] = self._query_terrain_height(*trailer_xyz[:2])
         return tractor_xyz, trailer_xyz, yaw
+
+    def _place_on_terrain(self, tractor_xyz, trailer_xyz, yaw):
+        """Reset each vehicle using BeamNG's native ground-aligned placement.
+
+        BeamNGpy vehicles.teleport calls setPositionRotation verbatim. In
+        BeamNG 0.38 lua/ge/spawn.lua, safeTeleport instead calls getBBOnGround,
+        which raycasts the footprint and adjusts position, pitch and roll.
+        Its rotation convention is quatFromDir (safeTeleport applies its own
+        180-degree conversion), unlike the raw teleport quaternion above.
+        """
+        commands = []
+        for vehicle, xyz in ((self.tractor, tractor_xyz), (self.trailer, trailer_xyz)):
+            x, y, z = map(float, xyz + self.spawn_offset)
+            commands.append(f"""
+            do
+                local veh = scenetree.findObject({json.dumps(vehicle.vid)})
+                assert(veh, 'Missing vehicle during terrain placement')
+                local rot = quatFromDir(vec3({float(np.cos(yaw))}, {float(np.sin(yaw))}, 0), vec3(0, 0, 1))
+                -- Only static obstacles; do not move traffic or the other rig
+                -- component. Coordinates refer to the vehicle reference node.
+                spawn.safeTeleport(veh, vec3({x}, {y}, {z}), rot, true, nil, false, false, true)
+            end
+            """)
+        self.bng.control.queue_lua_command("\n".join(commands) + "\nreturn true", response=True)
 
     def _initial_env_state(self) -> VehicleState:
         tractor_xyz, _, yaw = self._initial_beamng_state()
@@ -421,20 +450,11 @@ class BeamNGTrailerEnv(gym.Env):
 
         self._state: VehicleState | None = None
 
-        self._state = self._initial_env_state()
         tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state()
-        yaw_quat = BeamNGTrailerEnv.yaw_to_quat(yaw)
-
-        self.tractor.teleport(
-            pos=tuple(tractor_xyz + self.spawn_offset),
-            rot_quat=yaw_quat,
-            reset=True,
+        self._state = VehicleState(
+            *tractor_xyz[:2], yaw, yaw, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         )
-        self.trailer.teleport(
-            pos=tuple(trailer_xyz + self.spawn_offset),
-            rot_quat=yaw_quat,
-            reset=True,
-        )
+        self._place_on_terrain(tractor_xyz, trailer_xyz, yaw)
 
         self.tractor.control(0, 0, 0)
 

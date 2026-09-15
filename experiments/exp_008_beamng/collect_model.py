@@ -76,7 +76,7 @@ scenario = BeamNGTrailerEnvConfig   (
     ".", TrackConfig(mu=1.0, width=15), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
 )
 
-NPZ_SAVE_HEAD = "data_proc_test9"
+NPZ_SAVE_HEAD = "data_proc_test9-new"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 
 with open(Path(JSON_PTH), "r") as f:
@@ -90,7 +90,7 @@ ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
     ckpt.restore(
-        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test8_best",
+        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test9-new_best",
         state,
     ),
 )
@@ -304,7 +304,7 @@ vels = []
 # for v in range(25, 125, 10):
 #     vels.append(v)
 #     vels.append(-v)
-vels = [-40, -45, -50,]
+vels = [-40, -50,-60]
 
 fwd_weights = {
     "p_weight": 1e2,
@@ -314,12 +314,13 @@ fwd_weights = {
     "reverse": False,
 }
 rev_weights = {
-    "p_weight": 2e1,
+    "p_weight": 5e1,
     "p_slow_weight": 1e0,
     "c_weight": 5e1,
-    "a_weight": 5e2,
+    "a_weight": 2e2,
     "reverse": False,
 }
+
 
 
 mus = [0.4, 0.6, 0.8, 1.0]
@@ -390,8 +391,8 @@ for env_i, m in enumerate(mus):
                 None,
                 cost,
                 bound,
-                jnp.diag(jnp.array([2e-2, 0.2])),
-                inverse_temp=100,
+                jnp.diag(jnp.array([1e-2, 0.2])),
+                inverse_temp=500,
                 # inverse_temp=10,
                 K=500,
                 step=0.05,
@@ -414,10 +415,10 @@ for env_i, m in enumerate(mus):
 
 # ds = d.store(STATE_FS.data_version, verbose=True)
 
-load = DataStore.load(Path("experiments/exp_008_beamng/data_trial3_aug1v2.npz"))
+load = DataStore.load(Path("experiments/exp_008_beamng/data_trial3_aug1v3.npz"))
 print(load.data.shape)
 load.ingest(d)
 print(load.data.shape)
-load.save("experiments/exp_008_beamng/data_trial3_aug1v3.npz")
+load.save("experiments/exp_008_beamng/data_trial3_aug1v4.npz")
 
 # ds.save(Path("./experiments/exp_008_beamng/data_trial2.npz"))

@@ -73,13 +73,13 @@ jnp.set_printoptions(precision=2, suppress=True)
 # Config -- the only region you should need to edit
 # ----------------------------------------------------------------------------
 
-CONTROLLERS = ["model"]
+CONTROLLERS = ["prior"]
 VELS_KPH = [-30, -50, 80]
 
 LOCS = [0, 800, 1500]
 SEEDS = [i for i in range(3)]
 
-MAX_STEPS = 1500
+MAX_STEPS = 500
 CUTOFF = 100  # steps discarded from the head before averaging, as in the other benchmarks
 
 # Stall detector. Fires only when BOTH conditions hold over the trailing window:
@@ -97,9 +97,9 @@ TRACK_WIDTH = 15
 FRICTION_CSV = None
 DT = 0.05
 
-NPZ_SAVE_HEAD = "data_proc_test9-new"
+NPZ_SAVE_HEAD = "data_proc_test10-new"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
-CKPT_PTH = "src/learning/models/trained/beamng-l4-128-test9-new_best"
+CKPT_PTH = "src/learning/models/trained/beamng-l4-128-test10-new_rollout10"
 
 OUT_ROOT = Path("./experiments/exp_008_beamng/sweep_out")
 
@@ -125,9 +125,9 @@ REV_WEIGHTS = {
 # MPPI hyperparameters, keyed by sign(v_target). Verbatim from run_model.py,
 # shared by both controllers.
 FWD_MPPI = {
-    "cv": jnp.diag(jnp.array([7e-2, 0.2])),
+    "cv": jnp.diag(jnp.array([1e-2, 0.2])),
     "inverse_temp": 100,
-    "K": 500,
+    "K": 1500,
     "step": 0.05,
     "T": 80,
     "alpha": 0.01,
@@ -135,8 +135,8 @@ FWD_MPPI = {
 }
 REV_MPPI = {
     "cv": jnp.diag(jnp.array([1e-2, 0.2])),
-    "inverse_temp": 500,
-    "K": 500,
+    "inverse_temp": 100,
+    "K": 1500,
     "step": 0.05,
     "T": 75,
     "alpha": 0.01,

@@ -87,6 +87,61 @@ def eval_step(model, state):
 
 
 CHANNELS = ("ax", "ay", "alpha1", "alpha2", "steer", "accel")
+ROLLOUT_STATE_SCALE = jnp.array([0.2, 5.0, 3.0, 1.0, 1.0, 0.3, 0.3])
+
+
+def rollout_loss(model, seg, x_mean, x_std, y_mean, y_std, horizon, dt):
+    """Cumulative state loss under the model's own predictions.
+
+    Commands remain on the recorded trajectory, matching the open-loop
+    divergence test and deployed model recursion.  ``seg`` has shape
+    (batch, spec.H + horizon, 11).
+    """
+    H = SPEC.H
+    buf = seg[:, :H, IN_COLS]
+    hitch = jnp.arctan2(seg[:, H - 1, 0], seg[:, H - 1, 1])
+
+    def step(carry, j):
+        buf, hitch = carry
+        x = (buf.reshape((buf.shape[0], -1)) - x_mean) / x_std
+        pred = model(x) * y_std + y_mean
+
+        vx = buf[:, -1, 2] + pred[:, 0] * dt
+        vy = buf[:, -1, 3] + pred[:, 1] * dt
+        phi1dot = buf[:, -1, 4] + pred[:, 2] * dt
+        phi2dot = buf[:, -1, 5] + pred[:, 3] * dt
+        delta = jnp.clip(buf[:, -1, 6] + pred[:, 4] * dt, -1.0, 1.0)
+        accel = jnp.clip(buf[:, -1, 7] + pred[:, 5] * dt, -1.0, 1.0)
+        hitch = hitch + (phi1dot - phi2dot) * dt
+
+        true = seg[:, H + j]
+        row = jnp.stack(
+            (jnp.sin(hitch), jnp.cos(hitch), vx, vy, phi1dot, phi2dot,
+             delta, accel, true[:, 9], true[:, 10]), axis=1
+        )
+        buf = jnp.concatenate((buf[:, 1:], row[:, None]), axis=1)
+
+        hitch_true = jnp.arctan2(true[:, 0], true[:, 1])
+        hitch_err = (hitch - hitch_true + jnp.pi) % (2 * jnp.pi) - jnp.pi
+        err = jnp.stack(
+            (hitch_err, vx - true[:, 2], vy - true[:, 3],
+             phi1dot - true[:, 4], phi2dot - true[:, 5],
+             delta - true[:, 7], accel - true[:, 8]), axis=1
+        ) / ROLLOUT_STATE_SCALE
+        return (buf, hitch), jnp.mean(err ** 2, axis=1)
+
+    _, losses = jax.lax.scan(step, (buf, hitch), jnp.arange(seg.shape[1] - H))
+    return losses.mean()
+
+
+@nnx.jit
+def rollout_train_step(model, optimizer, seg, x_mean, x_std, y_mean, y_std,
+                       horizon, dt):
+    loss, grads = nnx.value_and_grad(rollout_loss)(
+        model, seg, x_mean, x_std, y_mean, y_std, horizon, dt
+    )
+    optimizer.update(model, grads)
+    return loss
 
 
 class LearnedDynamics:
@@ -182,6 +237,50 @@ class LearnedDynamics:
                     wandb.run.summary["best_epoch"] = e
                     self.save(output=f"src/learning/models/trained/{wandb.config.run_id}_best")
 
+    def refine_rollout(self, horizon=10, steps=900, batch_size=384,
+                       learning_rate=1e-4):
+        """Fine-tune a one-step checkpoint with pure cumulative rollout loss."""
+        H = self.data.spec.H
+        traj_starts = np.r_[0, np.cumsum(self.data.traj_len)[:-1]]
+        train_set = np.zeros(len(self.data.data), dtype=bool)
+        train_set[np.asarray(self.data.train)] = True
+        valid = []
+        for start, length in zip(traj_starts, self.data.traj_len):
+            n = int(length) - H - horizon + 1
+            if n <= 0:
+                continue
+            candidates = start + np.arange(n)
+            valid.append(candidates[train_set[candidates]])
+        valid = np.concatenate(valid)
+        if len(valid) < batch_size:
+            raise ValueError(f"only {len(valid)} rollout starts for batch {batch_size}")
+
+        optimizer = nnx.Optimizer(
+            self.model,
+            optax.chain(
+                optax.clip_by_global_norm(1.0),
+                optax.adamw(learning_rate, weight_decay=1e-6),
+            ),
+            wrt=nnx.Param,
+        )
+        x_mean, x_std = map(jnp.asarray, (self.data.x_mean, self.data.x_std))
+        y_mean, y_std = map(jnp.asarray, (self.data.y_mean, self.data.y_std))
+        W = np.arange(H + horizon)
+        rng = np.random.default_rng(914)
+
+        for step in range(steps):
+            starts = rng.choice(valid, batch_size, replace=False)
+            seg = jnp.asarray(self.data.data[starts[:, None] + W])
+            loss = rollout_train_step(
+                self.model, optimizer, seg, x_mean, x_std, y_mean, y_std,
+                horizon, self.data.dt,
+            )
+            if step % 25 == 0:
+                value = float(loss)
+                print(f"\rRollout refinement {step:4d}/{steps}: {value:.6f}", end="")
+                wandb.log({"rollout/step": step, "rollout/train_loss": value})
+        print()
+
     # def _unnormalize(self, dynamics):
     #     return dynamics * self.dynamics_std + self.dynamics_mean
 
@@ -274,11 +373,11 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
-    NPZ_SAVE_HEAD = "data_proc_test9-new"
+    NPZ_SAVE_HEAD = "data_proc_test10-new"
 
     spec = SPEC   
 
-    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial3_aug1v3.npz"))
+    raw = DataStore.load(Path("./experiments/exp_008_beamng/data_trial3_aug1v4.npz"))
     data: DataLoader = raw.build(spec, DataLoader)
 
     wandb.init(
@@ -294,7 +393,10 @@ if __name__ == "__main__":
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
-            "run_id": "beamng-l4-128-test9-new"
+            "run_id": "beamng-l4-128-test10-new",
+            "rollout_horizon": 10,
+            "rollout_steps": 900,
+            "rollout_learning_rate": 1e-4,
         },
     )
 
@@ -307,6 +409,16 @@ if __name__ == "__main__":
     # learned.load(Path.cwd() / "src/learning/models/trained/trailer-kin-512-best")
     try:
         learned.train(250)
+        best = Path.cwd() / f"src/learning/models/trained/{wandb.config.run_id}_best"
+        learned.load(best)
+        learned.refine_rollout(
+            horizon=wandb.config.rollout_horizon,
+            steps=wandb.config.rollout_steps,
+            learning_rate=wandb.config.rollout_learning_rate,
+        )
+        learned.save(
+            output=f"src/learning/models/trained/{wandb.config.run_id}_rollout10"
+        )
     # learned.save()
     finally:
         learned.ax_floor()

@@ -55,7 +55,7 @@ import json
 jnp.set_printoptions(precision=2, suppress=True)
 
 # Reverse/fwd configs should be automated
-V_TARGET = -50 / 3.6
+V_TARGET = 80 / 3.6
 
 spec = STATE_FS
 kin_fn = fiala_dyn
@@ -64,7 +64,7 @@ scenario = BeamNGTrailerEnvConfig   (
     ".", TrackConfig(mu=1.0, width=15), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
 )
 
-NPZ_SAVE_HEAD = "data_proc_test9-new"
+NPZ_SAVE_HEAD = "data_proc_test10-new"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 
 with open(Path(JSON_PTH), "r") as f:
@@ -78,7 +78,7 @@ ckpt = ocp.StandardCheckpointer()
 nnx.update(
     model,
     ckpt.restore(
-        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test9-new_best",
+        Path.cwd() / "src/learning/models/trained/beamng-l4-128-test10-new_rollout10",
         state,
     ),
 )
@@ -97,7 +97,7 @@ def build_planner_debug(all_samples, n_vis):
 env = BeamNGTrailerEnv(
     config=scenario,
     use_custom_mu=False,
-    spidx= 1500,
+    spidx= 800,
     dir=1
 )
 
@@ -144,10 +144,10 @@ if V_TARGET > 0:
         cost,
         bound,
         # bound_der,
-         jnp.diag(jnp.array([7e-2, 0.2])),
+         jnp.diag(jnp.array([2e-2, 0.2])),
         inverse_temp=100,
         # inverse_temp=10,
-        K=500,
+        K=1500,
         step=0.05,
         T=80,
         alpha=0.01,
@@ -193,9 +193,9 @@ else:
         cost,
         bound,
         jnp.diag(jnp.array([1e-2, 0.2])),
-        inverse_temp=500,
+        inverse_temp=100,
         # inverse_temp=10,
-        K=500,
+        K=1500,
         step=0.05,
         T=75,
         alpha=0.01,
@@ -295,11 +295,11 @@ try:
 
         print(i, elapsed, action)
 
-        n_viz = 10
-        # print(xhist.shape)
-        env.unwrapped.planner_debug = build_planner_debug(
-            xhist[..., -13:], n_viz
-        )
+        # n_viz = 10
+        # # print(xhist.shape)
+        # env.unwrapped.planner_debug = build_planner_debug(
+        #     xhist[..., -13:], n_viz
+        # )
 
         # speeds.append(jnp.hypot(state.vx, state.vy))
         # yaw_rates.append(state.yaw_truck_rate)
