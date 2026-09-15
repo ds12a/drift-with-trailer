@@ -146,7 +146,13 @@ class BeamNGTrailerEnv(gym.Env):
         centerline = centerline[idx]
 
         set_up_simple_logging(level=logging.WARNING)
-        bng = BeamNGpy("localhost", 25252, home=beamng_home_dir, user=beamng_user_dir)
+        bng = BeamNGpy(
+            "localhost",
+            25252,
+            home=beamng_home_dir,
+            user=beamng_user_dir,
+            headless=headless,
+        )
         bng.open(launch=True)
         logging.getLogger("beamngpy").handlers.clear()
         logging.getLogger("beamngpy").setLevel(logging.WARNING)

@@ -80,18 +80,19 @@ class MPC:
         J = 0
 
         for i in range(self.n):
-            x = self._euler_step(x, u[i])
+            u_i = u[i, :].T
+            x = self._euler_step(x, u_i)
 
-            J += self.cost(x, u[i])
-            self.constraint(self.opti, x, u[i])
+            J += self.cost(x, u_i)
+            self.constraint(self.opti, x, u_i)
 
         if self.term_cost:
-            J += self.term_cost(x, u[0], u[-1])
+            J += self.term_cost(x, u[0, :].T, u[-1, :].T)
 
         self.opti.minimize(J)
 
         if self.term_constraint:
-            self.term_constraint(self.opti, x, u[0], u[-1])
+            self.term_constraint(self.opti, x, u[0, :].T, u[-1, :].T)
 
         return u
 
@@ -109,8 +110,10 @@ class MPC:
         self.opti.solver("ipopt", self.ipopt_ws_settings if warm_start and self.last_trajectory is not None else self.ipopt_settings)
 
         if self.last_trajectory is not None and warm_start:
-            self.opti.set_initial(self.u_sym,  ca.vertcat(self.last_trajectory[1:], self.last_trajectory[-1]))
-            self.opti.set_initial(self.opti.lam_g, ca.vertcat(self.lt_lam_g[1:], self.lt_lam_g[-1]))
+            shifted = ca.DM(self.last_trajectory[[*range(1, self.n), self.n - 1], :])
+            self.opti.set_initial(self.u_sym, shifted)
+            if self.lt_lam_g is not None:
+                self.opti.set_initial(self.opti.lam_g, self.lt_lam_g)
         
         self.opti.set_value(self.x0, x)
 
@@ -128,4 +131,3 @@ class MPC:
             
         
         return u
-

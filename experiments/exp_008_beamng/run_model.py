@@ -97,7 +97,7 @@ def build_planner_debug(all_samples, n_vis):
 env = BeamNGTrailerEnv(
     config=scenario,
     use_custom_mu=False,
-    spidx= 800,
+    spidx= 0,
     dir=1
 )
 
