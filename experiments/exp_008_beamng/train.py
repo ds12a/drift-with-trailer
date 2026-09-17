@@ -373,7 +373,7 @@ class LearnedDynamics:
 
 if __name__ == "__main__":
 
-    NPZ_SAVE_HEAD = "data_proc_test10-new"
+    NPZ_SAVE_HEAD = "data_proc_h1"
 
     spec = SPEC   
 
@@ -393,7 +393,7 @@ if __name__ == "__main__":
             "n_train": len(data.train),
             "n_test": len(data.test),
             "y_std": data.y_std.tolist(),
-            "run_id": "beamng-l4-128-test10-new",
+            "run_id": "beamng-l4-h1",
             "rollout_horizon": 10,
             "rollout_steps": 900,
             "rollout_learning_rate": 1e-4,
@@ -410,15 +410,15 @@ if __name__ == "__main__":
     try:
         learned.train(250)
         best = Path.cwd() / f"src/learning/models/trained/{wandb.config.run_id}_best"
-        learned.load(best)
-        learned.refine_rollout(
-            horizon=wandb.config.rollout_horizon,
-            steps=wandb.config.rollout_steps,
-            learning_rate=wandb.config.rollout_learning_rate,
-        )
-        learned.save(
-            output=f"src/learning/models/trained/{wandb.config.run_id}_rollout10"
-        )
+        # learned.load(best)
+        # learned.refine_rollout(
+        #     horizon=wandb.config.rollout_horizon,
+        #     steps=wandb.config.rollout_steps,
+        #     learning_rate=wandb.config.rollout_learning_rate,
+        # )
+        # learned.save(
+        #     output=f"src/learning/models/trained/{wandb.config.run_id}_rollout10"
+        # )
     # learned.save()
     finally:
         learned.ax_floor()

@@ -81,5 +81,5 @@ def make_main_spec(H=4, dt=0.05, train_frac=0.7, split_seed=137, tag="fiala"):
     return FeatureSpec(in_fn, out_fn, H, F, train_frac, split_seed, f"v2-{tag}-H{H}-dt{dt}")
 
 
-H = 4
+H = 1
 STATE_FS = make_main_spec(H=H)

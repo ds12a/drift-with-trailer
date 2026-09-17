@@ -1,6 +1,7 @@
 """
 Velocity sweep benchmark for the BeamNG trailer controllers.
 
+<<<<<<< HEAD
 Sweeps start locations x velocity targets x seeds. Available controllers:
     "model"  learned dynamics, 13-wide history window   (run_model.py)
     "prior"  Fiala bicycle, 6-wide instantaneous state  (test_driver.py)
@@ -11,6 +12,17 @@ Liniger, Domahidi, and Morari (2015), equations (11) and (13), with the paper's
 vehicle model replaced by this repository's existing Fiala trailer dynamics.
 Start locations exercise different track geometry; seeds vary MPPI sampling
 and repeat the deterministic baseline from identical conditions.
+=======
+Sweeps start locations x velocity targets x seeds for rollout models:
+    "model_h1"  learned dynamics with H=1
+    "model_h4"  learned dynamics with H=4 ("model" is a compatibility alias)
+    "prior"     existing Fiala bicycle prior
+    "prior_surface" Fiala prior with measured tractor/trailer friction
+
+All run the same cost weights and the same MPPI hyperparameters, so the only
+difference between them is the rollout model. Start locations exercise different
+track geometry; seeds vary the MPPI sampling key at each location.
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 
 Outcomes are mutually exclusive and partition the runs:
     completed  reached MAX_STEPS without stalling      -> success_rate
@@ -33,6 +45,8 @@ import os
 # JAX is stupid
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
+import argparse
+from functools import lru_cache
 import csv
 import json
 import logging
@@ -44,8 +58,6 @@ from pathlib import Path
 import numpy as np
 import jax
 import jax.numpy as jnp
-from flax import nnx
-import orbax.checkpoint as ocp
 import absl.logging
 
 # Orbax is stupid
@@ -77,9 +89,11 @@ from experiments.exp_008_beamng.run_lqr_pid import (
 )
 from src.learning.models.trailer_nn import TrailerModel
 from src.learning.models.beamng_trailer_spec import fiala_dyn
-from src.learning.models.beamng_model_spec import STATE_FS, IN_COLS
+from src.learning.models.beamng_model_spec import make_main_spec, IN_COLS
+from experiments.exp_008_beamng.run_model_for_div import LEARNED_MODELS, restore_model
 from src.dynamics.trailer.beamng_dynamics import gen_util_funs as res_util
 from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs as prior_util
+from src.dynamics.trailer.trailer_bicycle_fiala_surface import gen_util_funs as surface_prior_util
 
 jnp.set_printoptions(precision=2, suppress=True)
 
@@ -88,7 +102,17 @@ jnp.set_printoptions(precision=2, suppress=True)
 # Config -- the only region you should need to edit
 # ----------------------------------------------------------------------------
 
+<<<<<<< HEAD
 CONTROLLERS = ["ipopt", "lqr-pid", "mpcc"]
+=======
+CONTROLLERS = ["model_h1", "model_h4", "prior", "prior_surface"]
+MODEL_CONFIGS = {
+    "model_h1": LEARNED_MODELS["learned_h1"],
+    "model_h4": LEARNED_MODELS["learned_h4"],
+}
+MODEL_CONFIGS["model"] = MODEL_CONFIGS["model_h4"]
+WARMUP_STEPS = 4  # same physical warmup for all controllers
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 VELS_KPH = [-30, -50, 80]
 
 LOCS = [0, 800, 1500]
@@ -113,9 +137,12 @@ FRICTION_CSV = None
 DT = 0.05
 HEADLESS = False
 
+<<<<<<< HEAD
 NPZ_SAVE_HEAD = "data_proc_test9-new"
 JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
 CKPT_PTH = "src/learning/models/trained/beamng-l4-128-test9-new_best"
+=======
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 
 OUT_ROOT = Path("./experiments/exp_008_beamng/sweep_out")
 
@@ -212,12 +239,7 @@ REV_MPCC_WEIGHTS = {
 # One-time setup
 # ----------------------------------------------------------------------------
 
-spec = STATE_FS
-HISTORY = spec.H
 ROW_W = 13  # [x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, delta_s, accel_s | d_cmd, a_cmd | arclen]
-
-with open(Path(JSON_PTH), "r") as f:
-    norm_stats = json.load(f)
 
 scenario = BeamNGTrailerEnvConfig(
     ".", TrackConfig(mu=MU, width=TRACK_WIDTH), bng_pickup_trailer_cfg, SimulationConfig(dt=DT)
@@ -225,6 +247,7 @@ scenario = BeamNGTrailerEnvConfig(
 if FRICTION_CSV is not None:
     scenario.track.friction_csv = FRICTION_CSV
 
+<<<<<<< HEAD
 model = None
 
 
@@ -237,6 +260,21 @@ def load_model():
         checkpoint = ocp.StandardCheckpointer()
         nnx.update(model, checkpoint.restore(Path.cwd() / CKPT_PTH, model_state))
     return model
+=======
+@lru_cache(maxsize=None)
+def load_learned_model(kind):
+    """Load only requested checkpoints; never use the global training spec."""
+    expected_h, stats_path, checkpoint = MODEL_CONFIGS[kind]
+    norm_stats = json.loads(stats_path.read_text())
+    input_width = len(norm_stats["x_mean"])
+    if input_width != expected_h * len(IN_COLS):
+        raise ValueError(f"{kind}: stats width {input_width} does not match H={expected_h}")
+    spec = make_main_spec(H=expected_h, dt=DT)
+    model = TrailerModel(input_width, len(norm_stats["y_mean"]))
+    restore_model(model, checkpoint.resolve())
+    return spec, model, norm_stats
+
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 
 # NOTE: `pred += prior(...)` is commented out in beamng_dynamics, so the learned
 # model is pure-learned and fiala_dyn is inert there. Passed only for the signature.
@@ -290,18 +328,31 @@ def make_mpc(v_kph, kind):
 
     cfg = dict(FWD_MPPI if v_target > 0 else REV_MPPI)
     cfg.update(PER_VEL_OVERRIDE.get(v_kph, {}))
-    if kind == "prior":
+    if kind in ("prior", "prior_surface"):
         cfg.update(PRIOR_OVERRIDE)
     cv = cfg.pop("cv")
 
+<<<<<<< HEAD
     if kind == "model":
         dynamics, cost, bound, _ = res_util(
             scenario, spec, KIN_FN, load_model(), norm_stats, **weights
         )
         x_d, hist = ROW_W, HISTORY
     else:
+=======
+    if kind in MODEL_CONFIGS:
+        spec, model, norm_stats = load_learned_model(kind)
+        dynamics, cost, bound, _ = res_util(scenario, spec, KIN_FN, model, norm_stats, **weights)
+        x_d, hist = ROW_W, spec.H
+    elif kind == "prior":
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
         dynamics, cost, bound, _ = prior_util(scenario, s_weight=0, **weights)
         x_d, hist = 6, None
+    elif kind == "prior_surface":
+        dynamics, cost, bound, _ = surface_prior_util(scenario, s_weight=0, **weights)
+        x_d, hist = 11, None
+    else:
+        raise ValueError(f"unknown controller: {kind}")
 
     # The sweep never consumes candidate rollout histories, so use the lean MPPI
     # implementation. The debug implementation materializes K x T state/control
@@ -325,7 +376,19 @@ def wrap_angle(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
 
 
+<<<<<<< HEAD
 def run_episode(env, mpc, v_kph, seed, kind, loc):
+=======
+def surface_prior_state(env):
+    """Measured contact friction enters the tractor and trailer independently."""
+    state = env.unwrapped._state
+    friction = env.unwrapped.query_surface_friction()
+    arc = env.unwrapped.track._arc_samples[env.unwrapped._last_index]
+    return jnp.asarray([*astuple(state)[:8], *friction.dynamics_mu, arc])
+
+
+def run_episode(mpc, v_kph, seed, kind, loc):
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
     """
     One episode. Returns per-step arrays plus the outcome label. Raises
     KeyboardInterrupt only on a double tap; a single tap aborts the episode
@@ -348,6 +411,8 @@ def run_episode(env, mpc, v_kph, seed, kind, loc):
     def mpc_state():
         """Analytic-controller input: instantaneous state + mu + arclen."""
         s = env.unwrapped._state
+        if kind == "prior_surface":
+            return surface_prior_state(env)
         return jnp.array(
             [
                 *astuple(s)[:-2],
@@ -374,12 +439,11 @@ def run_episode(env, mpc, v_kph, seed, kind, loc):
 
     env.step(jnp.zeros(2))
 
-    # Warmup. The learned model panics on a zero/default window, so drive H steps
-    # open-loop. The prior does not need it, but gets the same H steps so both
-    # controllers take over from the same physical state.
-    history = jnp.zeros(HISTORY * ROW_W)
+    # Equal physical warmup; each learned model retains its own history length.
+    history_rows = mpc.history or 1
+    history = jnp.zeros(history_rows * ROW_W)
     warm_a = 0.35 if v_target > 0 else -0.35
-    for _ in range(HISTORY):
+    for _ in range(WARMUP_STEPS):
         u = jnp.array([0.0, warm_a])
         env.step(np.array(u))
         state = env.unwrapped._state
@@ -408,6 +472,7 @@ def run_episode(env, mpc, v_kph, seed, kind, loc):
     try:
         for i in range(MAX_STEPS):
             t0 = time.perf_counter()
+<<<<<<< HEAD
             try:
                 if kind == "ipopt":
                     u, _ = solve_or_use_iterate(mpc, np.asarray(mpc_state()))
@@ -419,6 +484,10 @@ def run_episode(env, mpc, v_kph, seed, kind, loc):
                 break
             if kind in ("model", "prior"):
                 u.block_until_ready()
+=======
+            u = mpc.run_mpc(history if kind in MODEL_CONFIGS else mpc_state())
+            u.block_until_ready()
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
             solve_ms.append((time.perf_counter() - t0) * 1e3)
 
             if bool(jnp.any(jnp.isnan(u))):
@@ -429,11 +498,15 @@ def run_episode(env, mpc, v_kph, seed, kind, loc):
             # command frame is inverted. run_model.py passes u straight through
             # because the learned model was trained on stored BeamNG commands;
             # test_driver.py negates. Do not remove.
+<<<<<<< HEAD
             action = (
                 jnp.clip(jnp.array([-u[0], u[1]]), -1.0, 1.0)
                 if kind in ("prior", "ipopt", "lqr-pid", "mpcc")
                 else u
             )
+=======
+            action = jnp.array([-u[0], u[1]]) if kind in ("prior", "prior_surface") else u
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 
             env.step(np.array(action))
             iters = i + 1
@@ -659,7 +732,24 @@ def agg_line(a):
 # ----------------------------------------------------------------------------
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--controllers", nargs="+", choices=[*MODEL_CONFIGS, "prior", "prior_surface"],
+                        default=CONTROLLERS)
+    return parser.parse_args()
+
+
 def main():
+    controllers = parse_args().controllers
+    # Validate and restore selected models before starting BeamNG.
+    learned_config = {}
+    for kind in controllers:
+        if kind in MODEL_CONFIGS:
+            spec, _, _ = load_learned_model(kind)
+            h, stats_path, checkpoint = MODEL_CONFIGS[kind]
+            learned_config[kind] = {"H": h, "data_version": spec.data_version,
+                                    "checkpoint": str(checkpoint.resolve()),
+                                    "norm_stats": str(stats_path.resolve())}
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = OUT_ROOT / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -667,7 +757,7 @@ def main():
     with open(out_dir / "config.json", "w") as f:
         json.dump(
             {
-                "controllers": CONTROLLERS,
+                "controllers": controllers,
                 "vels_kph": VELS_KPH,
                 "locs": LOCS,
                 "seeds": SEEDS,
@@ -690,11 +780,18 @@ def main():
                 "track_width": TRACK_WIDTH,
                 "friction_csv": FRICTION_CSV,
                 "dt": DT,
+<<<<<<< HEAD
                 "headless": HEADLESS,
                 "checkpoint": CKPT_PTH,
                 "norm_stats": JSON_PTH,
                 "data_version": spec.data_version,
                 "H": HISTORY,
+=======
+                "learned_models": learned_config,
+                "prior_friction": {"prior": "track.find_mu",
+                                   "prior_surface": "BeamNG measured tractor/trailer contacts"},
+                "warmup_steps": WARMUP_STEPS,
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
                 "fwd_weights": FWD_WEIGHTS,
                 "rev_weights": REV_WEIGHTS,
                 "fwd_mppi": {k: str(v) for k, v in FWD_MPPI.items()},
@@ -739,14 +836,18 @@ def main():
 
     log(f"sweep -> {out_dir}")
     log(
-        f"{len(CONTROLLERS)} controllers x {len(LOCS)} locations x {len(VELS_KPH)} velocities x "
+        f"{len(controllers)} controllers x {len(LOCS)} locations x {len(VELS_KPH)} velocities x "
         f"{len(SEEDS)} seeds, max {MAX_STEPS} steps"
     )
     log()
 
     try:
+<<<<<<< HEAD
         
         for kind in CONTROLLERS:
+=======
+        for kind in controllers:
+>>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
             for v_kph in VELS_KPH:
                 progress(f"[{kind:<5} v={v_kph:>4} kph]  compiling...")
                 mpc = make_mpc(v_kph, kind)
