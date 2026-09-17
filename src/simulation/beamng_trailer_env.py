@@ -30,6 +30,10 @@ from pathlib import Path
 
 
 from src.simulation.rendering import PyBulletMirrorRenderer
+from src.simulation.beamng_surface_friction import (
+    BeamNGSurfaceFrictionQuery,
+    RigSurfaceFriction,
+)
 
 
 from dataclasses import asdict, dataclass, astuple
@@ -246,6 +250,22 @@ class BeamNGTrailerEnv(gym.Env):
         )
 
         self.use_custom_mu = use_custom_mu
+        self._surface_friction = BeamNGSurfaceFrictionQuery(
+            self.bng,
+            self.tractor,
+            self.trailer,
+            default_mu=config.track.mu,
+        )
+
+    def query_surface_friction(
+        self, refresh_catalog: bool = False
+    ) -> RigSurfaceFriction:
+        """Return current tractor/trailer contact materials and friction.
+
+        ``result.dynamics_mu`` can be written directly to the two friction
+        entries in ``trailer_bicycle_fiala_surface`` state.
+        """
+        return self._surface_friction.query(refresh_catalog=refresh_catalog)
 
     def _query_terrain_height(self, x: float, y: float, ray_top=1000.0, ray_bottom=-1000.0) -> float:
         lua = f"""
