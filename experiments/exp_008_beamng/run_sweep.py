@@ -1,37 +1,55 @@
 """
-BeamNG sweep over controllers, velocities, start indices and seeds.
-python -m experiments.exp_008_beamng.run_sweep
+Velocity sweep benchmark for the BeamNG trailer controllers.
 
-CSV summaries and raw NPZ samples are saved under sweep_out.
-Timing includes first-call compilation; aggregate p95 pools calls per cell.
-Distance survived is net progress in the requested direction after warmup.
-Ctrl-C skips an episode; twice within DOUBLE_TAP_S stops the sweep.
+Sweeps start locations x velocity targets x seeds. Available controllers:
+    "ipopt"     nonlinear MPC with Fiala trailer dynamics
+    "lqr-pid"   LQR steering and PID speed control
+    "mpcc"      MPCC with Fiala trailer dynamics
+    "model_h1"  learned dynamics with H=1
+    "model_h4"  learned dynamics with H=4 ("model" is a compatibility alias)
+    "prior"     existing Fiala bicycle prior
+    "prior_surface" Fiala prior with measured tractor/trailer friction
+
+The MPPI variants (model_h1, model_h4, prior, prior_surface) share cost weights
+and sampling settings. MPCC follows Liniger, Domahidi, and Morari (2015),
+equations (11) and (13), with Fiala trailer dynamics. The deterministic
+baselines repeat from identical conditions; seeds vary MPPI sampling.
+
+Outcomes are mutually exclusive and partition the runs:
+    completed  reached MAX_STEPS without stalling      -> success_rate
+    stalled    sat below STALL_VEL with no progress    -> stall_rate
+    jackknife  |hitch| >= max_hitch                    -> fail_rate
+    offtrack   |lateral_error| > width/2               -> fail_rate
+    nan        control went NaN                        -> fail_rate
+    solver_failed optimizer returned no finite iterate -> fail_rate
+
+Ctrl-C once  : abort the current episode, mark it `interrupted`, continue.
+Ctrl-C twice : (within DOUBLE_TAP_S) abort the whole sweep cleanly.
+Interrupted episodes are excluded from that cell's aggregate.
+
+Place at experiments/exp_008_beamng/run_sweep.py and run from the repo root:
+    python -m experiments.exp_008_beamng.run_sweep
 """
 
 import os
 
-from src.controllers.mpc.debug.mppi_jax_debug import MPPI_Jax_Debug
-
 # JAX is stupid
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.25"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
+import argparse
+from functools import lru_cache
 import csv
 import json
 import logging
 import time
 from dataclasses import astuple
 from datetime import datetime
-from itertools import product
 from pathlib import Path
 
 import numpy as np
 import jax
 import jax.numpy as jnp
-from flax import nnx
-import orbax.checkpoint as ocp
 import absl.logging
-import random
 
 # Orbax is stupid
 absl.logging.set_verbosity(absl.logging.WARNING)
@@ -49,132 +67,191 @@ from src.simulation.config.trailer_beamng_config import (
     SimulationConfig,
 )
 from src.controllers.mpc.mppi_jax import MPPI_Jax
-from src.utils.track import TrackModel
-from src.learning.models.trailer_nn import TrailerModel
-from src.learning.models.beamng_trailer_spec import fiala_dyn
-from src.learning.models.beamng_model_spec import STATE_FS, IN_COLS
-from src.dynamics.trailer.beamng_dynamics import gen_util_funs as res_util
-from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs as prior_util
+from src.controllers.mpc.mpcc import MPCC, MPCC_REFERENCE, MPCCWeights
 from experiments.exp_008_beamng.run_ipopt import (
     HORIZON as IPOPT_HORIZON,
     IPOPT_SETTINGS,
     make_mpc as make_ipopt_mpc,
-)
-from experiments.exp_008_beamng.run_pure_pursuit import (
-    PURE_PURSUIT_SETTINGS,
-    make_mpc as make_pure_pursuit,
+    solve_or_use_iterate,
 )
 from experiments.exp_008_beamng.run_lqr_pid import (
     LQR_PID_SETTINGS,
     make_mpc as make_lqr_pid,
 )
+from src.learning.models.trailer_nn import TrailerModel
+from src.learning.models.beamng_trailer_spec import fiala_dyn
+from src.learning.models.beamng_model_spec import make_main_spec, IN_COLS
+from experiments.exp_008_beamng.run_model_for_div import LEARNED_MODELS, restore_model
+from experiments.exp_008_beamng.experiment_paths import TRACK_CSV, resolve_saved_path
+from src.dynamics.trailer.beamng_dynamics import gen_util_funs as res_util
+from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs as prior_util
+from src.dynamics.trailer.trailer_bicycle_fiala_surface import gen_util_funs as surface_prior_util
 
 jnp.set_printoptions(precision=2, suppress=True)
 
 
-# Config
+# ----------------------------------------------------------------------------
+# Config -- the only region you should need to edit
+# ----------------------------------------------------------------------------
 
-CONTROLLERS = [ "ipopt", "lqr_pid"]
-VELS_KPH = [-40, -60, 100]
-START_INDICES = [0, 800, 1600]  # centerline indices
-SEEDS = [random.randint(0, 100000000) for _ in range(3)]
+CONTROLLERS = ["ipopt", "lqr-pid", "mpcc"]
+# CONTROLLERS = ["prior_surface"]
+MODEL_CONFIGS = {
+    "model_h1": LEARNED_MODELS["learned_h1"],
+    "model_h4": LEARNED_MODELS["learned_h4"],
+}
+MODEL_CONFIGS["model"] = MODEL_CONFIGS["model_h4"]
+WARMUP_STEPS = 4  # same physical warmup for all controllers
+VELS_KPH = [-30, -50, 80]
 
-print("seeds", SEEDS)
+LOCS = [0, 800, 1500]
+SEEDS = [i for i in range(3)]
 
 MAX_STEPS = 500
-CUTOFF = 100  # discard initial steps for velocity/hitch averages
+CUTOFF = 100  # steps discarded from the head before averaging, as in the other benchmarks
 
-# Stall requires both low speed and low track progress.
-STALL_VEL = 0.5  # m/s
+# Stall detector. Fires only when BOTH conditions hold over the trailing window:
+# speed alone false-positives on in-place oscillation, arc alone false-positives
+# on a genuine low-speed direction change.
+STALL_VEL = 0.5  # m/s -- matches the vx_safe clamp in fiala_dyn
 STALL_WINDOW = 40  # steps (2.0 s at dt=0.05)
 STALL_ARC = 1.0  # m of track progress over the window
-STALL_GRACE = 100  # steps
+STALL_GRACE = 100  # steps before the detector arms (every run starts at rest)
 
 DOUBLE_TAP_S = 2.0
 
 MU = 1.0
 TRACK_WIDTH = 15
-FRICTION_CSV = None #"src/simulation/assets/tracks/barcelona_ice.csv"  # None to leave unset
+FRICTION_CSV = None
 DT = 0.05
+HEADLESS = True
 
-NPZ_SAVE_HEAD = "data_proc_test8"
-JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
-CKPT_PTH = "src/learning/models/trained/beamng-l4-128-test8_best"
 
 OUT_ROOT = Path("./experiments/exp_008_beamng/sweep_out")
 
+# MPPI cost weights, verbatim from run_model.py. Shared by the learned and
+# analytic MPPI variants so their rollout model is the controlled difference.
 FWD_WEIGHTS = {
-    "p_weight": 1e2,
+    "p_weight": 2e1,
     "p_slow_weight": 1e0,
     "c_weight": 5e1,
-    "a_weight": 7e2,
+    "a_weight": 1e2,
     "reverse": False,
 }
 REV_WEIGHTS = {
-    "p_weight": 2e1,
+    "p_weight": 5e1,
     "p_slow_weight": 1e0,
-    "c_weight": 3e1,
+    "c_weight": 5e1,
     "a_weight": 2e2,
     "reverse": False,
 }
 
 
-# Forward/reverse MPPI settings
+# MPPI hyperparameters, keyed by sign(v_target). Verbatim from run_model.py,
+# shared by both MPPI controllers.
 FWD_MPPI = {
-    "cv": jnp.diag(jnp.array([3e-2, 0.2])),
-    "inverse_temp": 150,
-    "K": 500,
+    "cv": jnp.diag(jnp.array([1e-2, 0.2])),
+    "inverse_temp": 100,
+    "K": 1500,
     "step": 0.05,
     "T": 80,
     "alpha": 0.01,
     "gamma": 0.0,
 }
 REV_MPPI = {
-    "cv": jnp.diag(jnp.array([2e-2, 0.2])),
+    "cv": jnp.diag(jnp.array([1e-2, 0.2])),
     "inverse_temp": 100,
-    "K": 500,
+    "K": 1500,
     "step": 0.05,
-    "T": 65,
+    "T": 75,
     "alpha": 0.01,
     "gamma": 0.0,
 }
 
-# Override order: FWD/REV_MPPI, PER_VEL_OVERRIDE, PRIOR_OVERRIDE.
+# Merged on top of the sign-keyed dicts above, in this order:
+#   sign-keyed  <-  PER_VEL_OVERRIDE[kph]  <-  PRIOR_OVERRIDE (prior only)
 PER_VEL_OVERRIDE: dict[int, dict] = {}
 
-# Empty uses the learned controller's sampling settings.
+# Empty = the prior runs the model's tuning, per the controlled-comparison intent.
+# test_driver.py's own tuning, if you want to fall back to it:
+#   fwd: cv=diag([3e-3, 0.2]), inverse_temp=0.5, K=500,  T=80, alpha=0.05
+#   rev: cv=diag([1e-2, 0.2]), inverse_temp=0.5, K=2000, T=55, alpha=0.01
+# Note inverse_temp is a temperature (exp(-(S-S_min)/lambda)) and the prior's cost
+# landscape has a different spread, so 150/100 may be far off for it -- if the
+# prior collapses to argmin or to nominal, this is the first knob.
 PRIOR_OVERRIDE: dict = {}
 
+# Liniger et al. MPCC objective (equations 11 and 13), tuned in closed-loop Fiala
+# rollouts for this full-size tractor-trailer and normalized inputs. Ten blocked
+# controls retain the original two-second state horizon while cutting the online
+# decision vector from 120 to 30 values. Reverse uses stronger lag and hitch
+# stabilization because backing a passive trailer is open-loop unstable.
+MPCC_HORIZON = 40
+MPCC_SETTINGS = {
+    "control_horizon": 10,
+    "max_iter": 15,
+    "ftol": 1e-3,
+    "max_line_search_steps": 8,
+}
+FWD_MPCC_WEIGHTS = {
+    "contour": 50.0,
+    "lag": 500.0,
+    "progress": 100.0,
+    "steer_rate": 1.0,
+    "accel_rate": 0.1,
+    "progress_rate": 0.01,
+    "hitch": 100.0,
+    "hitch_rate": 10.0,
+    "speed": 30.0,
+    "speed_violation": 2000.0,
+    "track_slack_linear": 1e4,
+    "track_slack_quadratic": 1e5,
+    "hitch_slack_linear": 1e4,
+    "hitch_slack_quadratic": 1e5,
+}
+REV_MPCC_WEIGHTS = {
+    **FWD_MPCC_WEIGHTS,
+    "lag": 1000.0,
+    "hitch": 300.0,
+    "hitch_rate": 30.0,
+    "speed": 50.0,
+}
 
-# Setup
 
-spec = STATE_FS
-HISTORY = spec.H
+# ----------------------------------------------------------------------------
+# One-time setup
+# ----------------------------------------------------------------------------
+
 ROW_W = 13  # [x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, delta_s, accel_s | d_cmd, a_cmd | arclen]
-
-with open(Path(JSON_PTH), "r") as f:
-    norm_stats = json.load(f)
 
 scenario = BeamNGTrailerEnvConfig(
     ".", TrackConfig(mu=MU, width=TRACK_WIDTH), bng_pickup_trailer_cfg, SimulationConfig(dt=DT)
 )
+scenario.track.csv = str(TRACK_CSV)
+if scenario.track.friction_csv:
+    scenario.track.friction_csv = str(resolve_saved_path(scenario.track.friction_csv))
 if FRICTION_CSV is not None:
     scenario.track.friction_csv = FRICTION_CSV
 
 model = None
 
 
-def load_model():
-    """Load the checkpoint once, when needed."""
-    global model
-    if model is None:
-        model = TrailerModel(spec.H * len(IN_COLS), 6)
-        _, model_state = nnx.split(model)
-        checkpoint = ocp.StandardCheckpointer()
-        nnx.update(model, checkpoint.restore(Path.cwd() / CKPT_PTH, model_state))
-    return model
+@lru_cache(maxsize=None)
+def load_learned_model(kind):
+    """Load only requested checkpoints; never use the global training spec."""
+    expected_h, stats_path, checkpoint = MODEL_CONFIGS[kind]
+    norm_stats = json.loads(stats_path.read_text())
+    input_width = len(norm_stats["x_mean"])
+    if input_width != expected_h * len(IN_COLS):
+        raise ValueError(f"{kind}: stats width {input_width} does not match H={expected_h}")
+    spec = make_main_spec(H=expected_h, dt=DT)
+    model = TrailerModel(input_width, len(norm_stats["y_mean"]))
+    restore_model(model, checkpoint.resolve())
+    return spec, model, norm_stats
 
-# beamng_dynamics currently ignores the prior term.
+
+# NOTE: `pred += prior(...)` is commented out in beamng_dynamics, so the learned
+# model is pure-learned and fiala_dyn is inert there. Passed only for the signature.
 KIN_FN = fiala_dyn
 
 
@@ -190,43 +267,65 @@ def clear_progress():
     print("\r" + " " * 124 + "\r", end="", flush=True)
 
 
-# Controllers
+# ----------------------------------------------------------------------------
+# Controller construction
+# ----------------------------------------------------------------------------
 
 
 def make_mpc(v_kph, kind):
-    """Reuse each controller across starts/seeds to avoid JAX retracing."""
+    """
+    One controller per (kind, velocity), reused across seeds. Rebuilding per seed
+    would hand JAX a fresh cost closure -- a static arg -- and retrace every episode.
+    """
     v_target = v_kph / 3.6
-    if kind == "pure_pursuit":
-        return make_pure_pursuit(scenario, v_target, PURE_PURSUIT_SETTINGS)
-    if kind == "lqr_pid":
-        return make_lqr_pid(scenario, v_target, LQR_PID_SETTINGS)
-    if kind not in ("model", "prior", "ipopt"):
-        raise ValueError(f"Unknown controller: {kind}")
     weights = dict(FWD_WEIGHTS if v_target > 0 else REV_WEIGHTS)
     weights["v_target"] = v_target
 
     if kind == "ipopt":
         return make_ipopt_mpc(scenario, v_target, IPOPT_HORIZON, weights)
+    if kind == "lqr-pid":
+        return make_lqr_pid(scenario, v_target, LQR_PID_SETTINGS)
+    if kind == "mpcc":
+        mpcc_weights = FWD_MPCC_WEIGHTS if v_target > 0 else REV_MPCC_WEIGHTS
+        controller = MPCC(
+            scenario, v_target, horizon=MPCC_HORIZON,
+            weights=MPCCWeights(**mpcc_weights), **MPCC_SETTINGS,
+        )
+        controller.compile()
+        return controller
 
     cfg = dict(FWD_MPPI if v_target > 0 else REV_MPPI)
     cfg.update(PER_VEL_OVERRIDE.get(v_kph, {}))
-    if kind == "prior":
+    if kind in ("prior", "prior_surface"):
         cfg.update(PRIOR_OVERRIDE)
     cv = cfg.pop("cv")
 
-    if kind == "model":
-        dynamics, cost, bound, _ = res_util(
-            scenario, spec, KIN_FN, load_model(), norm_stats, **weights
-        )
-        x_d, hist = ROW_W, HISTORY
-    else:
+    if kind in MODEL_CONFIGS:
+        spec, model, norm_stats = load_learned_model(kind)
+        dynamics, cost, bound, _ = res_util(scenario, spec, KIN_FN, model, norm_stats, **weights)
+        x_d, hist = ROW_W, spec.H
+    elif kind == "prior":
         dynamics, cost, bound, _ = prior_util(scenario, s_weight=0, **weights)
         x_d, hist = 6, None
+    elif kind == "prior_surface":
+        dynamics, cost, bound, _ = surface_prior_util(scenario, s_weight=0, **weights)
+        x_d, hist = 11, None
+    else:
+        raise ValueError(f"unknown controller: {kind}")
 
-    return MPPI_Jax_Debug(x_d, 2, dynamics, None, cost, bound, cv, history=hist, **cfg)
+    # The sweep never consumes candidate rollout histories, so use the lean MPPI
+    # implementation. The debug implementation materializes K x T state/control
+    # histories and creates substantial avoidable GPU pressure.
+    gamma = cfg["gamma"]
+    mpc = MPPI_Jax(x_d, 2, dynamics, None, cost, bound, cv, history=hist, **cfg)
+    # MPPI_Jax currently derives gamma in __init__; preserve the explicit sweep
+    # setting so this remains behaviorally matched to run_model's debug controller.
+    mpc.gamma = gamma
+    return mpc
 
-
+# ----------------------------------------------------------------------------
 # Episode
+# ----------------------------------------------------------------------------
 
 _last_interrupt = [0.0]
 
@@ -235,8 +334,21 @@ def wrap_angle(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
 
 
-def run_episode(env, mpc, v_kph, seed, kind, start_index=0):
-    """Return episode samples and outcome. Double Ctrl-C raises KeyboardInterrupt."""
+def surface_prior_state(env):
+    """Measured contact friction enters the tractor and trailer independently."""
+    state = env.unwrapped._state
+    friction = env.unwrapped.query_surface_friction()
+    arc = env.unwrapped.track._arc_samples[env.unwrapped._last_index]
+    return jnp.asarray([*astuple(state)[:8], *friction.dynamics_mu, arc])
+
+
+def run_episode(env, mpc, v_kph, seed, kind, loc):
+    """
+    One episode. Returns per-step arrays plus the outcome label. Raises
+    KeyboardInterrupt only on a double tap; a single tap aborts the episode
+    and returns outcome="interrupted".
+    """
+
     v_target = v_kph / 3.6
     track = env.unwrapped.track
     L = track.length
@@ -251,8 +363,10 @@ def run_episode(env, mpc, v_kph, seed, kind, start_index=0):
         return d
 
     def mpc_state():
-        """State + mu + arc length."""
+        """Analytic-controller input: instantaneous state + mu + arclen."""
         s = env.unwrapped._state
+        if kind == "prior_surface":
+            return surface_prior_state(env)
         return jnp.array(
             [
                 *astuple(s)[:-2],
@@ -261,18 +375,29 @@ def run_episode(env, mpc, v_kph, seed, kind, start_index=0):
             ]
         )
 
-    env.reset(seed=seed, options={"start_index": start_index})
-    if kind != "ipopt":
+    env.spidx = loc
+    env.reset()
+    if kind == "ipopt":
+        # Do not seed a new start location with another episode's solution.
+        mpc.last_trajectory = None
+        mpc.lt_lam_g = None
+        accel_guess = 0.35 if v_target > 0 else -0.35
+        mpc.opti.set_initial(
+            mpc.u_sym, np.tile([0.0, accel_guess], (mpc.n, 1))
+        )
+    else:
         mpc.reset()
-    if kind in ("model", "prior"):
+    if kind in MODEL_CONFIGS or kind in ("prior", "prior_surface"):
+        # MPPI_Jax hardcodes key(0); reset() does not touch it.
         mpc.key = jax.random.key(seed)
 
     env.step(jnp.zeros(2))
 
-    # Fill the history window; same open-loop warmup for all controllers.
-    history = jnp.zeros(HISTORY * ROW_W)
+    # Equal physical warmup; each learned model retains its own history length.
+    history_rows = getattr(mpc, "history", None) or 1
+    history = jnp.zeros(history_rows * ROW_W)
     warm_a = 0.35 if v_target > 0 else -0.35
-    for _ in range(HISTORY):
+    for _ in range(WARMUP_STEPS):
         u = jnp.array([0.0, warm_a])
         env.step(np.array(u))
         state = env.unwrapped._state
@@ -282,11 +407,18 @@ def run_episode(env, mpc, v_kph, seed, kind, start_index=0):
         )
         history = jnp.concatenate([history[ROW_W:], curr])
 
+    # Equation (13) penalizes the first input increment against the previously
+    # applied input. Tell MPCC about the last warmup command before takeover.
+    if kind == "mpcc":
+        mpc.reset(previous_vehicle_control=np.array([0.0, warm_a]))
+
     speeds, velocities, hitches, hitch_rates = [], [], [], []
     lat_errs, cum_dist, solve_ms, us = [], [], [], []
     dist = 0.0
     initial_state = env.unwrapped._state
-    initial_proj, _ = track.project(initial_state.x, initial_state.y, env.unwrapped._last_index)
+    initial_proj, _ = track.project(
+        initial_state.x, initial_state.y, env.unwrapped._last_index
+    )
     prev_arc = initial_proj.arc_length
     outcome = "completed"
     iters = 0
@@ -294,31 +426,32 @@ def run_episode(env, mpc, v_kph, seed, kind, start_index=0):
     try:
         for i in range(MAX_STEPS):
             t0 = time.perf_counter()
-            if kind == "ipopt":
-                try:
-                    u = mpc.run_mpc(mpc_state(), verbose=False, warm_start=False)
-                except RuntimeError:
-                    solve_ms.append((time.perf_counter() - t0) * 1e3)
-                    outcome = "solver_failed"
-                    break
-            elif kind in ("pure_pursuit", "lqr_pid"):
-                u = mpc.run_mpc(mpc_state())
-            else:
-                u, *_ = mpc.run_mpc(history if kind == "model" else mpc_state())
-                u.block_until_ready()
+            try:
+                if kind == "ipopt":
+                    u, _ = solve_or_use_iterate(mpc, np.asarray(mpc_state()))
+                else:
+                    u = mpc.run_mpc(history if kind in MODEL_CONFIGS else mpc_state())
+                if kind in MODEL_CONFIGS or kind in ("prior", "prior_surface"):
+                    u.block_until_ready()
+            except RuntimeError:
+                solve_ms.append((time.perf_counter() - t0) * 1e3)
+                outcome = "solver_failed"
+                break
             solve_ms.append((time.perf_counter() - t0) * 1e3)
 
             if bool(jnp.any(jnp.isnan(u))):
                 outcome = "nan"
                 break
 
-            # The learned model uses BeamNG commands; analytic steer is inverted.
-            if kind in ("ipopt", "pure_pursuit", "lqr_pid"):
-                action = jnp.clip(jnp.array([-u[0], u[1]]), -1.0, 1.0)
-            elif kind == "prior":
-                action = jnp.array([-u[0], u[1]])
-            else:
-                action = u
+            # Frame: the analytic Fiala paths work in the internal steering frame, BeamNG's
+            # command frame is inverted. run_model.py passes u straight through
+            # because the learned model was trained on stored BeamNG commands;
+            # test_driver.py negates. Do not remove.
+            action = (
+                jnp.clip(jnp.array([-u[0], u[1]]), -1.0, 1.0)
+                if kind in ("prior", "ipopt", "lqr-pid", "mpcc", "prior_surface")
+                else u
+            )
 
             env.step(np.array(action))
             iters = i + 1
@@ -334,7 +467,8 @@ def run_episode(env, mpc, v_kph, seed, kind, start_index=0):
             )
             history = jnp.concatenate([history[ROW_W:], curr])
 
-            # Projected arc length for metrics, not the quantized training value.
+            # Independent projection for metrics -- do NOT reuse the quantised
+            # _arc_samples value above, that one exists to match the training row.
             proj, _ = track.project(state.x, state.y, env.unwrapped._last_index)
             if prev_arc is not None:
                 dist += arc_delta(prev_arc, proj.arc_length)
@@ -352,12 +486,12 @@ def run_episode(env, mpc, v_kph, seed, kind, start_index=0):
             us.append([float(action[0]), float(action[1])])
 
             progress(
-                f"[{kind:<5} idx={start_index} v={v_kph:>4} kph seed {seed}] step {iters:>4}/{MAX_STEPS} "
+                f"[{kind:<5} loc={loc:>4} v={v_kph:>4} kph  seed {seed}]  step {iters:>4}/{MAX_STEPS}  "
                 f"|v| {speed * 3.6:>6.1f} kph  hitch {hitch * 180.0 / np.pi:>6.2f}\u00b0  "
                 f"lat {proj.lateral_error:>6.2f}  dist {dist:>7.1f} m"
             )
 
-            # Separate jackknife and offtrack outcomes.
+            # Attribute the termination ourselves; env.step collapses both into one bool.
             if abs(hitch) >= max_hitch:
                 outcome = "jackknife"
                 break
@@ -383,9 +517,10 @@ def run_episode(env, mpc, v_kph, seed, kind, start_index=0):
 
     return {
         "controller": kind,
+        "loc": loc,
+        "start_index": loc,
         "v_kph": v_kph,
         "seed": seed,
-        "start_index": start_index,
         "outcome": outcome,
         "iters": iters,
         "speeds": np.asarray(speeds),
@@ -403,7 +538,13 @@ DEG = 180.0 / np.pi
 
 
 def summarize(ep):
-    """Velocity/hitch averages use the post-CUTOFF tail; max hitch uses the full run."""
+    """
+    Hitch stats are reported in degrees. `hitch_max_deg` is over the whole run
+    (worst excursion); everything else is over the post-CUTOFF tail, matching
+    avg_v_kph. Note hitch_max saturates at max_hitch for any jackknife run by
+    definition, so it only discriminates among runs that survived -- the rms and
+    p95 numbers are the ones to compare across cells.
+    """
     sp = ep["speeds"]
     h = np.abs(ep["hitches"])
     hd = ep["hitch_rates"]
@@ -415,9 +556,10 @@ def summarize(ep):
     distance = float(ep["cum_dist"][-1]) if ep["cum_dist"].size else 0.0
     return {
         "controller": ep["controller"],
+        "loc": ep["loc"],
+        "start_index": ep["start_index"],
         "v_kph": ep["v_kph"],
         "seed": ep["seed"],
-        "start_index": ep["start_index"],
         "run_index": ep.get("run_index", 0),
         "outcome": ep["outcome"],
         "iters": ep["iters"],
@@ -434,23 +576,27 @@ def summarize(ep):
         "hitch_rate_rms": float(np.sqrt(np.mean(hd_t**2))) if hd_t.size else 0.0,
         "mean_lat_err": float(np.mean(np.abs(ep["lat_errs"]))) if ep["lat_errs"].size else 0.0,
         "solve_ms": float(np.mean(ep["solve_ms"])) if ep["solve_ms"].size else 0.0,
-        "solve_p95_ms": float(np.percentile(ep["solve_ms"], 95)) if ep["solve_ms"].size else 0.0,
-        # Raw timings for aggregation, omitted from CSV.
+        "solve_p95_ms": (
+            float(np.percentile(ep["solve_ms"], 95)) if ep["solve_ms"].size else 0.0
+        ),
+        # Retained for pooled aggregate timing and omitted from the CSV.
         "_solve_samples": ep["solve_ms"],
     }
 
 
 def aggregate(rows):
-    """Aggregate non-interrupted runs for one controller/index/velocity."""
+    """Per-seed summaries for one (controller, location, velocity) cell."""
     n = len(rows)
     if n == 0:
         return None
     outc = [r["outcome"] for r in rows]
-    times = np.concatenate([r["_solve_samples"] for r in rows])
+    time_arrays = [r["_solve_samples"] for r in rows if r["_solve_samples"].size]
+    times = np.concatenate(time_arrays) if time_arrays else np.empty(0)
     return {
         "controller": rows[0]["controller"],
-        "v_kph": rows[0]["v_kph"],
+        "loc": rows[0]["loc"],
         "start_index": rows[0]["start_index"],
+        "v_kph": rows[0]["v_kph"],
         "n": n,
         "avg_v_kph": float(np.mean([r["avg_v_kph"] for r in rows])),
         "std_v_kph": float(np.std([r["avg_v_kph"] for r in rows])),
@@ -464,7 +610,9 @@ def aggregate(rows):
         )
         / n,
         "avg_distance_m": float(np.mean([r["distance_m"] for r in rows])),
-        "avg_distance_survived_m": float(np.mean([r["distance_survived_m"] for r in rows])),
+        "avg_distance_survived_m": float(
+            np.mean([r["distance_survived_m"] for r in rows])
+        ),
         "avg_frac_below_v": float(np.mean([r["frac_below_v"] for r in rows])),
         "avg_hitch_rms_deg": float(np.mean([r["hitch_rms_deg"] for r in rows])),
         "std_hitch_rms_deg": float(np.std([r["hitch_rms_deg"] for r in rows])),
@@ -478,16 +626,18 @@ def aggregate(rows):
     }
 
 
+# ----------------------------------------------------------------------------
 # Output
+# ----------------------------------------------------------------------------
 
 EP_COLS = [
-    "controller", "v_kph", "seed", "outcome", "iters", "avg_v_kph", "distance_m",
+    "controller", "loc", "v_kph", "seed", "outcome", "iters", "avg_v_kph", "distance_m",
     "frac_below_v", "hitch_rms_deg", "hitch_mean_deg", "hitch_p95_deg",
     "hitch_max_deg", "hitch_final_deg", "hitch_rate_rms", "mean_lat_err", "solve_ms",
     "start_index", "run_index", "avg_vx_kph", "distance_survived_m", "solve_p95_ms",
 ]
 AGG_COLS = [
-    "controller", "v_kph", "n", "avg_v_kph", "std_v_kph", "avg_iters", "std_iters",
+    "controller", "loc", "v_kph", "n", "avg_v_kph", "std_v_kph", "avg_iters", "std_iters",
     "success_rate", "stall_rate", "fail_rate", "avg_distance_m", "avg_frac_below_v",
     "avg_hitch_rms_deg", "std_hitch_rms_deg", "avg_hitch_mean_deg", "avg_hitch_p95_deg",
     "avg_hitch_max_deg", "avg_hitch_final_deg", "avg_hitch_rate_rms", "avg_solve_ms",
@@ -505,7 +655,7 @@ def write_csv(path, cols, rows):
 
 def agg_header():
     return (
-        f"  {'ctl':<6} {'index':>6} {'v_tgt':>6}  {'avg_v':>7}  {'avg_it':>7}  "
+        f"  {'ctl':<6} {'loc':>5} {'v_tgt':>6}  {'avg_v':>7}  {'avg_it':>7}  "
         f"{'succ':>6}  {'stall':>6}  {'fail':>6}  {'dist':>8}  {'<v_lo':>6}  "
         f"{'h_rms':>7}  {'h_p95':>7}  {'h_max':>7}  {'ms_mean':>8} {'ms_p95':>8}"
     )
@@ -513,44 +663,54 @@ def agg_header():
 
 def agg_line(a):
     return (
-        f"  {a['controller']:<6} {a['start_index']:>6} {a['v_kph']:>6}  {a['avg_v_kph']:>7.1f}  {a['avg_iters']:>7.0f}  "
+        f"  {a['controller']:<6} {a['loc']:>5} {a['v_kph']:>6}  {a['avg_v_kph']:>7.1f}  {a['avg_iters']:>7.0f}  "
         f"{a['success_rate']:>6.0%}  {a['stall_rate']:>6.0%}  {a['fail_rate']:>6.0%}  "
         f"{a['avg_distance_survived_m']:>8.1f}  {a['avg_frac_below_v']:>6.1%}  "
         f"{a['avg_hitch_rms_deg']:>6.2f}\u00b0  {a['avg_hitch_p95_deg']:>6.2f}\u00b0  "
-        f"{a['avg_hitch_max_deg']:>6.2f}\u00b0  {a['avg_solve_ms']:>8.2f} {a['p95_solve_ms']:>8.2f}"
+        f"{a['avg_hitch_max_deg']:>6.2f}\u00b0  {a['avg_solve_ms']:>8.2f} "
+        f"{a['p95_solve_ms']:>8.2f}"
     )
 
 
+# ----------------------------------------------------------------------------
 # Sweep
+# ----------------------------------------------------------------------------
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--controllers", nargs="+", choices=[*MODEL_CONFIGS, "prior", "prior_surface", "ipopt", "lqr-pid", "mpcc"],
+                        default=CONTROLLERS)
+    return parser.parse_args()
 
 
 def main():
-    track = TrackModel.from_config(scenario.track)
-    if not START_INDICES or any(
-        isinstance(index, (bool, np.bool_))
-        or not isinstance(index, (int, np.integer))
-        or not 0 <= index < len(track.centerline)
-        for index in START_INDICES
-    ):
-        raise ValueError(f"START_INDICES must contain indices in [0, {len(track.centerline) - 1}]")
-    if len(set(START_INDICES)) != len(START_INDICES):
-        raise ValueError("START_INDICES must be distinct")
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    controllers = parse_args().controllers
+    # Validate and restore selected models before starting BeamNG.
+    learned_config = {}
+    for kind in controllers:
+        if kind in MODEL_CONFIGS:
+            spec, _, _ = load_learned_model(kind)
+            h, stats_path, checkpoint = MODEL_CONFIGS[kind]
+            learned_config[kind] = {"H": h, "data_version": spec.data_version,
+                                    "checkpoint": str(checkpoint.resolve()),
+                                    "norm_stats": str(stats_path.resolve())}
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = OUT_ROOT / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with open(out_dir / "config.json", "w") as f:
         json.dump(
             {
-                "controllers": CONTROLLERS,
+                "controllers": controllers,
                 "vels_kph": VELS_KPH,
-                "start_indices": START_INDICES,
+                "locs": LOCS,
                 "seeds": SEEDS,
                 "max_steps": MAX_STEPS,
                 "cutoff": CUTOFF,
                 "metric_definitions": {
-                    "solve_ms": "All controller calls, including first-call JIT compilation and failed solves; excludes construction and env.step",
-                    "aggregate_timing": "Mean and p95 pooled over calls in non-interrupted episodes for each controller/start_index/velocity",
+                    "solve_ms": "All controller calls, including failed solves; excludes construction, env.step, and MPCC's explicit one-time JIT compile",
+                    "aggregate_timing": "Mean and p95 pooled over calls in non-interrupted episodes for each controller/location/velocity",
                     "distance_survived_m": "Nonnegative net track progress in the requested direction, from controller takeover after warmup",
                     "velocities": "Raw signed truck-frame [vx, vy] in m/s; speeds is magnitude in m/s",
                     "hitches": "Raw signed trailer yaw minus truck yaw, wrapped, in radians; summary magnitudes in degrees",
@@ -565,10 +725,10 @@ def main():
                 "track_width": TRACK_WIDTH,
                 "friction_csv": FRICTION_CSV,
                 "dt": DT,
-                "checkpoint": CKPT_PTH,
-                "norm_stats": JSON_PTH,
-                "data_version": spec.data_version,
-                "H": HISTORY,
+                "learned_models": learned_config,
+                "prior_friction": {"prior": "track.find_mu",
+                                   "prior_surface": "BeamNG measured tractor/trailer contacts"},
+                "warmup_steps": WARMUP_STEPS,
                 "fwd_weights": FWD_WEIGHTS,
                 "rev_weights": REV_WEIGHTS,
                 "fwd_mppi": {k: str(v) for k, v in FWD_MPPI.items()},
@@ -577,100 +737,137 @@ def main():
                 "prior_override": {k: str(v) for k, v in PRIOR_OVERRIDE.items()},
                 "ipopt_horizon": IPOPT_HORIZON,
                 "ipopt_settings": IPOPT_SETTINGS,
-                "pure_pursuit_settings": PURE_PURSUIT_SETTINGS,
                 "lqr_pid_settings": LQR_PID_SETTINGS,
-                "lqr_pid_model": "fiala_linearized",
+                "lqr_pid_model": "causal_fiala_linearized_no_lookahead",
+                "mpcc_horizon": MPCC_HORIZON,
+                "mpcc_settings": MPCC_SETTINGS,
+                "fwd_mpcc_weights": FWD_MPCC_WEIGHTS,
+                "rev_mpcc_weights": REV_MPCC_WEIGHTS,
+                "mpcc_model": "src.dynamics.trailer.trailer_bicycle_fiala",
+                "mpcc_reference": MPCC_REFERENCE,
+                "mpcc_adaptations": {
+                    "vehicle_model": "Existing full-size Fiala tractor-trailer dynamics replace the paper's RC-car bicycle model",
+                    "solver": "Direct nonlinear shooting with JAX gradients and SciPy L-BFGS-B replaces the paper's LTV-QP real-time iteration; piecewise-constant input blocking reduces online decision dimension",
+                    "reverse": "A direction multiplier advances virtual progress backward while retaining the paper's nonnegative progress-speed bound",
+                    "hitch": "Soft hitch-angle constraints plus hitch-angle and hitch-rate regularization are added for the trailer",
+                    "target_speed": "A target-speed cost and soft wrong-direction/overspeed penalty adapt progress-maximizing MPCC to the target-velocity ablation",
+                    "closed_track": "Predicted Fiala arc length is wrapped to preserve its local projection hint across the start/finish boundary",
+                    "weight_source": "Tuned with closed-loop rollouts of the repository's Fiala tractor-trailer model at the sweep velocities and start locations",
+                },
+                "mpcc_tuning": {
+                    "prediction_horizon_s": MPCC_HORIZON * DT,
+                    "decision_variables_before_blocking": MPCC_HORIZON * 3,
+                    "decision_variables_after_blocking": MPCC_SETTINGS["control_horizon"] * 3,
+                    "beamng_validated": False,
+                },
             },
             f,
             indent=2,
         )
 
-    env = BeamNGTrailerEnv(config=scenario)
+    # env = BeamNGTrailerEnv(config=scenario, use_custom_mu=False)
 
     ep_rows, agg_rows = [], []
     aborted = False
+    env = None
 
     log(f"sweep -> {out_dir}")
     log(
-        f"{len(CONTROLLERS)} controllers x {len(START_INDICES)} locations x {len(VELS_KPH)} velocities x "
+        f"{len(controllers)} controllers x {len(LOCS)} locations x {len(VELS_KPH)} velocities x "
         f"{len(SEEDS)} seeds, max {MAX_STEPS} steps"
     )
     log()
 
     try:
-        for kind in CONTROLLERS:
+        for kind in controllers:
             for v_kph in VELS_KPH:
                 progress(f"[{kind:<5} v={v_kph:>4} kph]  compiling...")
                 mpc = make_mpc(v_kph, kind)
                 clear_progress()
 
-                per_start = {index: [] for index in START_INDICES}
-                for run_index, (start_index, seed) in enumerate(product(START_INDICES, SEEDS)):
-                    ep = run_episode(env, mpc, v_kph, seed, kind, start_index)
-                    ep["run_index"] = run_index
-                    s = summarize(ep)
-                    ep_rows.append(s)
-                    if s["outcome"] != "interrupted":
-                        per_start[start_index].append(s)
+                # Location changes only the BeamNG initial condition; reuse the
+                # same controller closure and compiled executable at every start.
+                for loc_index, idx in enumerate(LOCS):
+                    per_v = []
+                    for seed_index, seed in enumerate(SEEDS):
+                        run_index = loc_index * len(SEEDS) + seed_index
+                        env = BeamNGTrailerEnv(
+                            config=scenario, use_custom_mu=False, headless=HEADLESS
+                        )
+                        ep = run_episode(env, mpc, v_kph, seed, kind, idx)
+                        env.close()
+                        ep["run_index"] = run_index
+                        s = summarize(ep)
+                        ep_rows.append(s)
+                        if s["outcome"] != "interrupted":
+                            per_v.append(s)
 
-                    np.savez_compressed(
-                        out_dir / f"raw_{kind}_idx{start_index}_v{v_kph}_s{seed}_r{run_index}.npz",
-                        controller=kind,
-                        start_index=start_index,
-                        v_kph=v_kph,
-                        seed=seed,
-                        run_index=run_index,
-                        outcome=ep["outcome"],
-                        iters=ep["iters"],
-                        speeds=ep["speeds"],
-                        velocities=ep["velocities"],
-                        distance_survived_m=s["distance_survived_m"],
-                        hitches=ep["hitches"],
-                        hitch_rates=ep["hitch_rates"],
-                        lat_errs=ep["lat_errs"],
-                        cum_dist=ep["cum_dist"],
-                        solve_ms=ep["solve_ms"],
-                        us=ep["us"],
-                    )
+                        np.savez_compressed(
+                            out_dir / f"raw_{kind}_loc{idx}_v{v_kph}_s{seed}.npz",
+                            controller=kind,
+                            loc=ep["loc"],
+                            start_index=ep["start_index"],
+                            v_kph=v_kph,
+                            seed=seed,
+                            run_index=run_index,
+                            outcome=ep["outcome"],
+                            iters=ep["iters"],
+                            speeds=ep["speeds"],
+                            velocities=ep["velocities"],
+                            distance_survived_m=s["distance_survived_m"],
+                            hitches=ep["hitches"],
+                            hitch_rates=ep["hitch_rates"],
+                            lat_errs=ep["lat_errs"],
+                            cum_dist=ep["cum_dist"],
+                            solve_ms=ep["solve_ms"],
+                            us=ep["us"],
+                        )
 
-                    log(
-                        f"  {kind:<5} idx={start_index} v={v_kph:>4} seed {seed} | {s['outcome']:<11} "
-                        f"iters {s['iters']:>4}  |v| {s['avg_v_kph']:>6.1f} kph  "
-                        f"dist {s['distance_survived_m']:>7.1f} m  "
-                        f"hitch rms {s['hitch_rms_deg']:>5.2f}\u00b0 max {s['hitch_max_deg']:>5.2f}\u00b0 "
-                        f"fin {s['hitch_final_deg']:>5.2f}\u00b0  "
-                        f"below_v {s['frac_below_v']:>5.1%}  solve mean {s['solve_ms']:>5.1f} p95 {s['solve_p95_ms']:>5.1f} ms"
-                    )
+                        log(
+                            f"  {kind:<5} loc={idx:>4}  v={v_kph:>4}  seed {seed}  |  {s['outcome']:<11}  "
+                            f"iters {s['iters']:>4}  |v| {s['avg_v_kph']:>6.1f} kph  "
+                            f"dist {s['distance_survived_m']:>7.1f} m  "
+                            f"hitch rms {s['hitch_rms_deg']:>5.2f}\u00b0 max {s['hitch_max_deg']:>5.2f}\u00b0 "
+                            f"fin {s['hitch_final_deg']:>5.2f}\u00b0  "
+                            f"below_v {s['frac_below_v']:>5.1%}  "
+                            f"solve mean {s['solve_ms']:>5.1f} p95 {s['solve_p95_ms']:>5.1f} ms"
+                        )
 
-                    # Save after each episode.
-                    partial = [aggregate(rows) for rows in per_start.values() if rows]
-                    write_csv(out_dir / "episodes.csv", EP_COLS, ep_rows)
-                    write_csv(
-                        out_dir / "agg.csv",
-                        AGG_COLS,
-                        agg_rows + partial,
-                    )
+                        # Flush after every episode -- a hard kill loses one run at most.
+                        partial = aggregate(per_v)
+                        write_csv(out_dir / "episodes.csv", EP_COLS, ep_rows)
+                        write_csv(
+                            out_dir / "agg.csv",
+                            AGG_COLS,
+                            agg_rows + ([partial] if partial else []),
+                        )
 
-                for rows in per_start.values():
-                    a = aggregate(rows)
+                    a = aggregate(per_v)
                     if a is not None:
                         agg_rows.append(a)
                         log(agg_header())
                         log(agg_line(a))
-                log()
-                write_csv(out_dir / "agg.csv", AGG_COLS, agg_rows)
+                    log()
+                    write_csv(out_dir / "agg.csv", AGG_COLS, agg_rows)
+
+                # Each velocity creates distinct static dynamics/cost closures.
+                # Release their compiled executables before constructing the next
+                # cell instead of accumulating all variants in device memory.
+                del mpc
+                jax.clear_caches()
 
     except KeyboardInterrupt:
         aborted = True
         clear_progress()
         log("\n  sweep aborted")
     finally:
-        env.close()
-        # Include the partial cell when interrupted.
+        if env is not None:
+            env.close()
+        # Rebuild aggregates so an aborted sweep retains its final partial cell.
         groups = {}
         for row in ep_rows:
             if row["outcome"] != "interrupted":
-                key = (row["controller"], row["start_index"], row["v_kph"])
+                key = (row["controller"], row["loc"], row["v_kph"])
                 groups.setdefault(key, []).append(row)
         agg_rows = [aggregate(rows) for rows in groups.values()]
         write_csv(out_dir / "episodes.csv", EP_COLS, ep_rows)

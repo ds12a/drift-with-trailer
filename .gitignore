@@ -30,7 +30,7 @@ uv.lock
 *.mp4
 *.mov
 *.avi
-# The project site deliberately serves its demonstration videos from docs/assets.
+# The project site serves demonstration videos from docs/assets.
 !docs/assets/*.mp4
 experiments/**/outputs/
 experiments/**/runs/
@@ -42,4 +42,8 @@ gym_videos
 src/learning/models/trained/
 *.bak
 wandb/
+divergence_out
+sweep_out
+experiments/exp_008_beamng/model_divergence_out
+experiment_data_20261031
 Learned_Model_Predictive_Dynamics_for_Robust_Tractor_Trailer_Control_under_Uncertainty/

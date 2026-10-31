@@ -107,16 +107,13 @@ class MPC:
         Returns:
             ca.SX: u
         """
-        dual_warm_start = warm_start and self.last_trajectory is not None and self.u_d == 1
-        self.opti.solver(
-            "ipopt",
-            self.ipopt_ws_settings if dual_warm_start else self.ipopt_settings,
-        )
+        self.opti.solver("ipopt", self.ipopt_ws_settings if warm_start and self.last_trajectory is not None else self.ipopt_settings)
 
         if self.last_trajectory is not None and warm_start:
-            self.opti.set_initial(self.u_sym,  ca.vertcat(self.last_trajectory[1:], self.last_trajectory[-1:]))
-            if dual_warm_start:
-                self.opti.set_initial(self.opti.lam_g, ca.vertcat(self.lt_lam_g[1:], self.lt_lam_g[-1]))
+            shifted = ca.DM(self.last_trajectory[[*range(1, self.n), self.n - 1], :])
+            self.opti.set_initial(self.u_sym, shifted)
+            if self.lt_lam_g is not None:
+                self.opti.set_initial(self.opti.lam_g, self.lt_lam_g)
         
         self.opti.set_value(self.x0, x)
 

@@ -30,6 +30,10 @@ from pathlib import Path
 
 
 from src.simulation.rendering import PyBulletMirrorRenderer
+from src.simulation.beamng_surface_friction import (
+    BeamNGSurfaceFrictionQuery,
+    RigSurfaceFriction,
+)
 
 
 from dataclasses import asdict, dataclass, astuple
@@ -79,8 +83,8 @@ bng_pickup_trailer_cfg = VehicleConfig(
     hitch_offset=2.0,  # CG to hitch ball at rear bumper (~lr + 0.35m)
     max_hitch=np.deg2rad(80),
 )
-import beamngpy
-print(beamngpy.__version__)
+
+
 class BeamNGTrailerEnv(gym.Env):
     metadata = {
         "render_modes": ["human", "rgb_array_follow", "rgb_array_birds_eye"],
@@ -92,8 +96,15 @@ class BeamNGTrailerEnv(gym.Env):
         config: BeamNGTrailerEnvConfig = None,
         beamng_home_dir=None,
         beamng_user_dir=None,
+        use_custom_mu=True,  # TODO
         headless=False,
+        spidx=None,
+        dir=1,  # 1, -1
+        nogpu=False,
     ) -> None:
+
+        self.spidx = spidx
+        self.dir = dir
 
         if config is None:
             config = BeamNGTrailerEnvConfig()
@@ -111,7 +122,7 @@ class BeamNGTrailerEnv(gym.Env):
                 beamng_home_dir = Path.home() / "Executables" / "BeamNG.tech.v0.38.5.0"
 
         if beamng_user_dir is None:
-            beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech/current"
+            beamng_user_dir = Path.home() / ".local/share/BeamNG/BeamNG.tech"
 
         self.beamng_home_dir = Path(beamng_home_dir)
         self.beamng_user_dir = Path(beamng_user_dir)
@@ -140,7 +151,14 @@ class BeamNGTrailerEnv(gym.Env):
         centerline = centerline[idx]
 
         set_up_simple_logging(level=logging.WARNING)
-        bng = BeamNGpy("localhost", 25252, home=beamng_home_dir, user=beamng_user_dir)
+        bng = BeamNGpy(
+            "localhost",
+            25252,
+            home=beamng_home_dir,
+            user=beamng_user_dir,
+            headless=headless,
+            nogpu=nogpu,
+        )
         bng.open(launch=True)
         logging.getLogger("beamngpy").handlers.clear()
         logging.getLogger("beamngpy").setLevel(logging.WARNING)
@@ -154,7 +172,7 @@ class BeamNGTrailerEnv(gym.Env):
         # bng.set_steps_per_second(20)
         self.bng = bng  # For convenience
 
-        print(list(bng.get_levels().keys()))
+        # print(list(bng.get_levels().keys()))
 
         # tech_ground for no ice, snow_1 for ice
         # place the zip in BeamNG_ROOT/content/levels
@@ -206,16 +224,21 @@ class BeamNGTrailerEnv(gym.Env):
 
         bng.control.pause()
 
-        self.bng.step(60)
-        self.tractor.couplers.attach()
-        self.tractor.queue_lua_command(
-            "controller.getController('mainEngine').thermalsEnabled = false"
-        )  # don't want engine to shut off, this doesn't work
+        # Scenario placement/BeamNGpy's cling flag does not guarantee slope
+        # alignment. Use the engine's footprint-based ground placement too.
+        self._place_on_terrain(tractor_xyz, trailer_xyz, yaw)
 
-        self.set_track_friction(config.track.mu, config.track.mu)
+        # self.bng.step(60)
+        # self.tractor.couplers.attach()
+        # self.tractor.queue_lua_command(
+        #     "controller.getController('mainEngine').thermalsEnabled = false"
+        # )  # don't want engine to shut off, this doesn't work
 
-        # self.imu1 = AdvancedIMU("imu1", bng, self.tractor)
-        # self.imu2 = AdvancedIMU("imu2", bng, self.trailer)
+        # if use_custom_mu:
+        #     self.set_track_friction(config.track.mu, config.track.mu)
+
+        # # self.imu1 = AdvancedIMU("imu1", bng, self.tractor)
+        # # self.imu2 = AdvancedIMU("imu2", bng, self.trailer)
 
         e = Electrics()
         self.tractor.attach_sensor("e1", e)
@@ -233,6 +256,24 @@ class BeamNGTrailerEnv(gym.Env):
             high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
+
+        self.use_custom_mu = use_custom_mu
+        self._surface_friction = BeamNGSurfaceFrictionQuery(
+            self.bng,
+            self.tractor,
+            self.trailer,
+            default_mu=config.track.mu,
+        )
+
+    def query_surface_friction(
+        self, refresh_catalog: bool = False
+    ) -> RigSurfaceFriction:
+        """Return current tractor/trailer contact materials and friction.
+
+        ``result.dynamics_mu`` can be written directly to the two friction
+        entries in ``trailer_bicycle_fiala_surface`` state.
+        """
+        return self._surface_friction.query(refresh_catalog=refresh_catalog)
 
     def _query_terrain_height(self, x: float, y: float, ray_top=1000.0, ray_bottom=-1000.0) -> float:
         lua = f"""
@@ -278,22 +319,24 @@ class BeamNGTrailerEnv(gym.Env):
         yaw -= np.pi / 2
         return (0.0, 0.0, np.cos(yaw / 2), np.sin(yaw / 2))  # terrible
 
-    def _initial_beamng_state(self, start_index=None):
+    def _initial_beamng_state(self, index=None):
         centerline = self.track.centerline
-        if start_index is not None:
-            index = int(start_index)
-        else:
-            index = np.random.randint(0, len(centerline)) if self.config.simulation.random_start else 0
+        index = np.random.randint(0, len(centerline)) if self.config.simulation.random_start else 0
+        # index = 1660
+
+        if self.spidx is not None:
+            index = self.spidx
+
 
         spawn_z = self._query_terrain_height(*centerline[index])
 
-        print("terrain at height", spawn_z)
+        # print("terrain at height", spawn_z)
 
         tractor_xyz = np.concat([centerline[index], np.array([spawn_z])], axis=0)
         dx, dy = (centerline[(index + 1) % len(centerline)] - centerline[index])[:2]
-        yaw = np.arctan2(dy, dx)
+        yaw = np.arctan2(self.dir * dy, self.dir * dx)
 
-        if self.config.simulation.random_start and start_index is None:
+        if self.config.simulation.random_start:
             yaw += (np.random.random() - 0.5) * 2 * 0.1
 
         tangent = np.array([np.cos(yaw), np.sin(yaw), 0])
@@ -301,10 +344,35 @@ class BeamNGTrailerEnv(gym.Env):
         l = 8.0
         trailer_off = -0.175  # Trailer seems a bit off on spawn pose, probably xyz calc from random node rather than center
         trailer_xyz = tractor_xyz - tangent * l + normal * trailer_off
+        trailer_xyz[2] = self._query_terrain_height(*trailer_xyz[:2])
         return tractor_xyz, trailer_xyz, yaw
 
-    def _initial_env_state(self, start_index=None) -> VehicleState:
-        tractor_xyz, _, yaw = self._initial_beamng_state(start_index)
+    def _place_on_terrain(self, tractor_xyz, trailer_xyz, yaw):
+        """Reset each vehicle using BeamNG's native ground-aligned placement.
+
+        BeamNGpy vehicles.teleport calls setPositionRotation verbatim. In
+        BeamNG 0.38 lua/ge/spawn.lua, safeTeleport instead calls getBBOnGround,
+        which raycasts the footprint and adjusts position, pitch and roll.
+        Its rotation convention is quatFromDir (safeTeleport applies its own
+        180-degree conversion), unlike the raw teleport quaternion above.
+        """
+        commands = []
+        for vehicle, xyz in ((self.tractor, tractor_xyz), (self.trailer, trailer_xyz)):
+            x, y, z = map(float, xyz + self.spawn_offset)
+            commands.append(f"""
+            do
+                local veh = scenetree.findObject({json.dumps(vehicle.vid)})
+                assert(veh, 'Missing vehicle during terrain placement')
+                local rot = quatFromDir(vec3({float(np.cos(yaw))}, {float(np.sin(yaw))}, 0), vec3(0, 0, 1))
+                -- Only static obstacles; do not move traffic or the other rig
+                -- component. Coordinates refer to the vehicle reference node.
+                spawn.safeTeleport(veh, vec3({x}, {y}, {z}), rot, true, nil, false, false, true)
+            end
+            """)
+        self.bng.control.queue_lua_command("\n".join(commands) + "\nreturn true", response=True)
+
+    def _initial_env_state(self) -> VehicleState:
+        tractor_xyz, _, yaw = self._initial_beamng_state()
         return VehicleState(
             *tractor_xyz[:2],
             yaw,
@@ -396,19 +464,30 @@ class BeamNGTrailerEnv(gym.Env):
     ):
         super().reset(seed=seed)
 
-        start_index = options.get("start_index") if options else None
-        self._state = self._initial_env_state(start_index)
-        tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state(start_index)
-        yaw_quat = BeamNGTrailerEnv.yaw_to_quat(yaw)
+        self.scenario.restart()
 
-        self.tractor.teleport(
-            pos=tuple(tractor_xyz + self.spawn_offset),
-            rot_quat=yaw_quat,
+
+        if self.use_custom_mu:
+            self.set_track_friction(self.config.track.mu, self.config.track.mu)
+
+        # self.imu1 = AdvancedIMU("imu1", bng, self.tractor)
+        # self.imu2 = AdvancedIMU("imu2", bng, self.trailer)
+
+        # e = Electrics()
+        # self.tractor.attach_sensor("e1", e)
+
+        self._state: VehicleState | None = None
+
+        tractor_xyz, trailer_xyz, yaw = self._initial_beamng_state()
+        self._state = VehicleState(
+            *tractor_xyz[:2], yaw, yaw, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         )
-        self.trailer.teleport(
-            pos=tuple(trailer_xyz + self.spawn_offset),
-            rot_quat=yaw_quat,
-        )
+        self._place_on_terrain(tractor_xyz, trailer_xyz, yaw)
+
+        self.tractor.control(0, 0, 0)
+
+        # self.tractor.
+
         # time.sleep(100000)
 
         self._state.vx = 0.0
@@ -419,7 +498,9 @@ class BeamNGTrailerEnv(gym.Env):
 
         _, self._last_index = self.track.project(self._state.x, self._state.y, None)
 
-        self.bng.step(10)
+        self.tractor.couplers.attach()
+
+        self.bng.step(60)
 
         # for i in range(10):
         #     self.bng.step(1)
@@ -527,7 +608,8 @@ class BeamNGTrailerEnv(gym.Env):
             self._debug_line_ids.append(lid)
 
     def close(self):
-        pass
+        self.bng.disconnect()
+        time.sleep(2.5)
 
 
 if __name__ == "__main__":
@@ -535,7 +617,7 @@ if __name__ == "__main__":
     # bng.open()
 
     scenario = BeamNGTrailerEnvConfig   (
-    ".", TrackConfig(mu=1.0, width=25), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
+    ".", TrackConfig(mu=1.0, width=15), bng_pickup_trailer_cfg, SimulationConfig(dt=0.05)
 )
 
     env = BeamNGTrailerEnv(scenario)

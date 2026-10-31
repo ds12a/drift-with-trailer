@@ -107,6 +107,14 @@ class DataStore:
             self, "traj_len", np.concatenate((self.traj_len, ds.traj_len), axis=0)
         )
 
+    def ingest_ds(self, ds):  # unsafe, does not check version
+        # ds = dc.store(self.version, True)
+        object.__setattr__(self, "data", np.concatenate([self.data, ds.data], axis=0))
+        object.__setattr__(self, "meta", np.concatenate([self.meta, ds.meta], axis=0))
+        object.__setattr__(
+            self, "traj_len", np.concatenate((self.traj_len, ds.traj_len), axis=0)
+        )
+
 
 @dataclass(frozen=True)
 class DataLoader:
