@@ -55,7 +55,7 @@ import json
 jnp.set_printoptions(precision=2, suppress=True)
 
 # Reverse/fwd configs should be automated
-V_TARGET = 80 / 3.6
+V_TARGET = -30 / 3.6
 
 spec = STATE_FS
 kin_fn = fiala_dyn

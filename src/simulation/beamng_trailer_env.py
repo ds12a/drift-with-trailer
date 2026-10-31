@@ -100,6 +100,7 @@ class BeamNGTrailerEnv(gym.Env):
         headless=False,
         spidx=None,
         dir=1,  # 1, -1
+        nogpu=False,
     ) -> None:
 
         self.spidx = spidx
@@ -156,6 +157,7 @@ class BeamNGTrailerEnv(gym.Env):
             home=beamng_home_dir,
             user=beamng_user_dir,
             headless=headless,
+            nogpu=nogpu,
         )
         bng.open(launch=True)
         logging.getLogger("beamngpy").handlers.clear()

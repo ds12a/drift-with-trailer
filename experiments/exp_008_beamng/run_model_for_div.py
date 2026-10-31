@@ -51,6 +51,7 @@ from src.simulation.config.trailer_beamng_config import (
     SimulationConfig,
     TrackConfig,
 )
+from experiments.exp_008_beamng.experiment_paths import MODEL_BUNDLE, TRACK_CSV
 
 
 logging.getLogger("beamngpy").setLevel(logging.WARNING)
@@ -82,14 +83,14 @@ I_MU_TRACTOR = 10
 I_MU_TRAILER = 11
 I_ARC = 12
 
-DEFAULT_MODELS = ("learned_h1", "learned_h4", "fiala_surface", "fiala")
-STATS_PATH = Path("experiments/exp_008_beamng/data_proc_test10-new_stats.json")
+DEFAULT_MODELS = ("learned_h4", "fiala_surface", "fiala")
+STATS_PATH = MODEL_BUNDLE / "experiments/exp_008_beamng/data_proc_test10-new_stats.json"
 CHECKPOINT_PATH = (
-    Path.cwd() / "src/learning/models/trained/beamng-l4-128-test10-new_rollout10"
+    MODEL_BUNDLE / "src/learning/models/trained/beamng-l4-128-test10-new_rollout10"
 )
 LEARNED_MODELS = {
-    "learned_h1": (1, Path("experiments/exp_008_beamng/data_proc_h1_stats.json"),
-                   Path("src/learning/models/trained/beamng-l4-h1")),
+    "learned_h1": (1, MODEL_BUNDLE / "experiments/exp_008_beamng/data_proc_h1_stats.json",
+                   MODEL_BUNDLE / "src/learning/models/trained/beamng-l4-h1"),
     "learned_h4": (4, STATS_PATH, CHECKPOINT_PATH),
     "learned": (4, STATS_PATH, CHECKPOINT_PATH),  # compatibility alias
 }
@@ -513,13 +514,13 @@ def parse_args():
     parser.add_argument("--backward-kph", type=float, default=-30.0)
     parser.add_argument("--environment-label", default="default",
                         help="environment identifier saved in the manifest")
-    parser.add_argument("--track-csv", default=TrackConfig().csv)
+    parser.add_argument("--track-csv", default=str(TRACK_CSV))
     for history in (1, 4):
         _, stats, checkpoint = LEARNED_MODELS[f"learned_h{history}"]
         parser.add_argument(f"--h{history}-stats", type=Path, default=stats)
         parser.add_argument(f"--h{history}-checkpoint", type=Path, default=checkpoint)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--spawn-index", type=int, default=800)
+    parser.add_argument("--spawn-index", type=int, default=0)
     parser.add_argument("--track-width", type=float, default=15.0)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()

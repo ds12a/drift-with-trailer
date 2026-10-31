@@ -1,61 +1,0 @@
-pybullet build time: Jan 29 2025 23:17:20
-ERROR:jax._src.xla_bridge:Jax plugin configuration error: Exception when calling jax_plugins.xla_cuda12.initialize()
-Traceback (most recent call last):
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/jax/_src/xla_bridge.py", line 508, in discover_pjrt_plugins
-    plugin_module.initialize()
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/jax_plugins/xla_cuda12/__init__.py", line 373, in initialize
-    c_api = xb.register_plugin(
-            ^^^^^^^^^^^^^^^^^^^
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/jax/_src/xla_bridge.py", line 650, in register_plugin
-    c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/jaxlib/xla_client.py", line 115, in load_pjrt_plugin_dynamically
-    return _xla.load_pjrt_plugin(plugin_name, library_path, c_api=None)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-jax.errors.JaxRuntimeError: ALREADY_EXISTS: PJRT_Api already exists for device type cuda
-sweep -> experiments/exp_008_beamng/sweep_out/20260914_220146
-3 controllers x 3 locations x 3 velocities x 3 seeds, max 500 steps
-
-[ipopt v= -30 kph]  compiling...                                                                                                                                                                                                                        [ipopt loc=   0 v= -30 kph  seed 0]  step    1/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step    2/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step    3/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step    4/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step    5/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step    6/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step    7/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step    8/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step    9/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   10/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   11/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   12/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   13/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   14/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   15/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   16/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   17/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   18/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   19/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               CasADi - 2026-09-14 22:01:59 WARNING("KeyboardInterruptException") [.../casadi/interfaces/ipopt/ipopt_nlp.cpp:114]
-[ipopt loc=   0 v= -30 kph  seed 0]  step   20/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               [ipopt loc=   0 v= -30 kph  seed 0]  step   21/500  |v|    0.1 kph  hitch   0.11°  lat   0.00  dist     0.0 m               CasADi - 2026-09-14 22:02:00 WARNING("KeyboardInterruptException") [.../casadi/interfaces/ipopt/ipopt_nlp.cpp:95]
-Traceback (most recent call last):
-  File "/home/dasc_lab/Code/drift-with-trailer/experiments/exp_008_beamng/run_sweep.py", line 764, in main
-    ep = run_episode(env, mpc, v_kph, seed, kind, idx)
-         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/dasc_lab/Code/drift-with-trailer/experiments/exp_008_beamng/run_sweep.py", line 438, in run_episode
-    env.step(np.array(action))
-  File "/home/dasc_lab/Code/drift-with-trailer/src/simulation/beamng_trailer_env.py", line 521, in step
-    self.tractor.control(steering=steer, throttle=throttle, brake=brake)
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/beamngpy/vehicle/vehicle.py", line 328, in control
-    return self._root.control(steering, throttle, brake, parkingbrake, clutch, gear, is_adas)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/beamngpy/api/vehicle/root.py", line 63, in control
-    self._send(data).ack("Controlled")
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/beamngpy/connection/connection.py", line 306, in ack
-    message = self.recv()
-              ^^^^^^^^^^^
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/beamngpy/connection/connection.py", line 296, in recv
-    message = self.connection.recv(self.req_id)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/beamngpy/connection/connection.py", line 233, in recv
-    message = self.skt.recv()
-              ^^^^^^^^^^^^^^^
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/beamngpy/connection/prefixed_length_socket.py", line 78, in recv
-    packed_length = self._recv_exactly(self.HEADER_BYTES)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/dasc_lab/Code/drift-with-trailer/.venv/lib/python3.11/site-packages/beamngpy/connection/prefixed_length_socket.py", line 43, in _recv_exactly
-    raise BNGDisconnectedError("The simulator ended the connection.")
-beamngpy.logging.BNGDisconnectedError: The simulator ended the connection.
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "/home/dasc_lab/Code/drift-with-trailer/experiments/exp_008_beamng/run_sweep.py", line 859, in <module>
-    main()
-  File "/home/dasc_lab/Code/drift-with-trailer/experiments/exp_008_beamng/run_sweep.py", line 832, in main
-    env.close()
-  File "/home/dasc_lab/Code/drift-with-trailer/src/simulation/beamng_trailer_env.py", line 590, in close
-    time.sleep(2.5)
-KeyboardInterrupt

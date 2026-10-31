@@ -1,28 +1,19 @@
 """
 Velocity sweep benchmark for the BeamNG trailer controllers.
 
-<<<<<<< HEAD
 Sweeps start locations x velocity targets x seeds. Available controllers:
-    "model"  learned dynamics, 13-wide history window   (run_model.py)
-    "prior"  Fiala bicycle, 6-wide instantaneous state  (test_driver.py)
-    "mpcc"   Liniger et al. MPCC formulation with Fiala trailer dynamics
-
-The two MPPI variants share cost weights and sampling settings. MPCC follows
-Liniger, Domahidi, and Morari (2015), equations (11) and (13), with the paper's
-vehicle model replaced by this repository's existing Fiala trailer dynamics.
-Start locations exercise different track geometry; seeds vary MPPI sampling
-and repeat the deterministic baseline from identical conditions.
-=======
-Sweeps start locations x velocity targets x seeds for rollout models:
+    "ipopt"     nonlinear MPC with Fiala trailer dynamics
+    "lqr-pid"   LQR steering and PID speed control
+    "mpcc"      MPCC with Fiala trailer dynamics
     "model_h1"  learned dynamics with H=1
     "model_h4"  learned dynamics with H=4 ("model" is a compatibility alias)
     "prior"     existing Fiala bicycle prior
     "prior_surface" Fiala prior with measured tractor/trailer friction
 
-All run the same cost weights and the same MPPI hyperparameters, so the only
-difference between them is the rollout model. Start locations exercise different
-track geometry; seeds vary the MPPI sampling key at each location.
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
+The MPPI variants (model_h1, model_h4, prior, prior_surface) share cost weights
+and sampling settings. MPCC follows Liniger, Domahidi, and Morari (2015),
+equations (11) and (13), with Fiala trailer dynamics. The deterministic
+baselines repeat from identical conditions; seeds vary MPPI sampling.
 
 Outcomes are mutually exclusive and partition the runs:
     completed  reached MAX_STEPS without stalling      -> success_rate
@@ -91,6 +82,7 @@ from src.learning.models.trailer_nn import TrailerModel
 from src.learning.models.beamng_trailer_spec import fiala_dyn
 from src.learning.models.beamng_model_spec import make_main_spec, IN_COLS
 from experiments.exp_008_beamng.run_model_for_div import LEARNED_MODELS, restore_model
+from experiments.exp_008_beamng.experiment_paths import TRACK_CSV, resolve_saved_path
 from src.dynamics.trailer.beamng_dynamics import gen_util_funs as res_util
 from src.dynamics.trailer.trailer_bicycle_fiala import gen_util_funs as prior_util
 from src.dynamics.trailer.trailer_bicycle_fiala_surface import gen_util_funs as surface_prior_util
@@ -102,17 +94,14 @@ jnp.set_printoptions(precision=2, suppress=True)
 # Config -- the only region you should need to edit
 # ----------------------------------------------------------------------------
 
-<<<<<<< HEAD
 CONTROLLERS = ["ipopt", "lqr-pid", "mpcc"]
-=======
-CONTROLLERS = ["model_h1", "model_h4", "prior", "prior_surface"]
+# CONTROLLERS = ["prior_surface"]
 MODEL_CONFIGS = {
     "model_h1": LEARNED_MODELS["learned_h1"],
     "model_h4": LEARNED_MODELS["learned_h4"],
 }
 MODEL_CONFIGS["model"] = MODEL_CONFIGS["model_h4"]
 WARMUP_STEPS = 4  # same physical warmup for all controllers
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 VELS_KPH = [-30, -50, 80]
 
 LOCS = [0, 800, 1500]
@@ -135,14 +124,8 @@ MU = 1.0
 TRACK_WIDTH = 15
 FRICTION_CSV = None
 DT = 0.05
-HEADLESS = False
+HEADLESS = True
 
-<<<<<<< HEAD
-NPZ_SAVE_HEAD = "data_proc_test9-new"
-JSON_PTH = f"./experiments/exp_008_beamng/{NPZ_SAVE_HEAD}_stats.json"
-CKPT_PTH = "src/learning/models/trained/beamng-l4-128-test9-new_best"
-=======
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 
 OUT_ROOT = Path("./experiments/exp_008_beamng/sweep_out")
 
@@ -244,23 +227,15 @@ ROW_W = 13  # [x, y, phi1, phi2, vx, vy, phi1dot, phi2dot, delta_s, accel_s | d_
 scenario = BeamNGTrailerEnvConfig(
     ".", TrackConfig(mu=MU, width=TRACK_WIDTH), bng_pickup_trailer_cfg, SimulationConfig(dt=DT)
 )
+scenario.track.csv = str(TRACK_CSV)
+if scenario.track.friction_csv:
+    scenario.track.friction_csv = str(resolve_saved_path(scenario.track.friction_csv))
 if FRICTION_CSV is not None:
     scenario.track.friction_csv = FRICTION_CSV
 
-<<<<<<< HEAD
 model = None
 
 
-def load_model():
-    """Load the learned rollout model only when that controller is selected."""
-    global model
-    if model is None:
-        model = TrailerModel(spec.H * len(IN_COLS), 6)
-        _, model_state = nnx.split(model)
-        checkpoint = ocp.StandardCheckpointer()
-        nnx.update(model, checkpoint.restore(Path.cwd() / CKPT_PTH, model_state))
-    return model
-=======
 @lru_cache(maxsize=None)
 def load_learned_model(kind):
     """Load only requested checkpoints; never use the global training spec."""
@@ -274,7 +249,6 @@ def load_learned_model(kind):
     restore_model(model, checkpoint.resolve())
     return spec, model, norm_stats
 
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 
 # NOTE: `pred += prior(...)` is commented out in beamng_dynamics, so the learned
 # model is pure-learned and fiala_dyn is inert there. Passed only for the signature.
@@ -304,27 +278,21 @@ def make_mpc(v_kph, kind):
     would hand JAX a fresh cost closure -- a static arg -- and retrace every episode.
     """
     v_target = v_kph / 3.6
+    weights = dict(FWD_WEIGHTS if v_target > 0 else REV_WEIGHTS)
+    weights["v_target"] = v_target
+
     if kind == "ipopt":
-        weights = dict(FWD_WEIGHTS if v_target > 0 else REV_WEIGHTS)
         return make_ipopt_mpc(scenario, v_target, IPOPT_HORIZON, weights)
     if kind == "lqr-pid":
         return make_lqr_pid(scenario, v_target, LQR_PID_SETTINGS)
     if kind == "mpcc":
         mpcc_weights = FWD_MPCC_WEIGHTS if v_target > 0 else REV_MPCC_WEIGHTS
         controller = MPCC(
-            scenario,
-            v_target,
-            horizon=MPCC_HORIZON,
-            weights=MPCCWeights(**mpcc_weights),
-            **MPCC_SETTINGS,
+            scenario, v_target, horizon=MPCC_HORIZON,
+            weights=MPCCWeights(**mpcc_weights), **MPCC_SETTINGS,
         )
         controller.compile()
         return controller
-    if kind not in ("model", "prior"):
-        raise ValueError(f"Unknown controller: {kind}")
-
-    weights = dict(FWD_WEIGHTS if v_target > 0 else REV_WEIGHTS)
-    weights["v_target"] = v_target
 
     cfg = dict(FWD_MPPI if v_target > 0 else REV_MPPI)
     cfg.update(PER_VEL_OVERRIDE.get(v_kph, {}))
@@ -332,20 +300,11 @@ def make_mpc(v_kph, kind):
         cfg.update(PRIOR_OVERRIDE)
     cv = cfg.pop("cv")
 
-<<<<<<< HEAD
-    if kind == "model":
-        dynamics, cost, bound, _ = res_util(
-            scenario, spec, KIN_FN, load_model(), norm_stats, **weights
-        )
-        x_d, hist = ROW_W, HISTORY
-    else:
-=======
     if kind in MODEL_CONFIGS:
         spec, model, norm_stats = load_learned_model(kind)
         dynamics, cost, bound, _ = res_util(scenario, spec, KIN_FN, model, norm_stats, **weights)
         x_d, hist = ROW_W, spec.H
     elif kind == "prior":
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
         dynamics, cost, bound, _ = prior_util(scenario, s_weight=0, **weights)
         x_d, hist = 6, None
     elif kind == "prior_surface":
@@ -364,7 +323,6 @@ def make_mpc(v_kph, kind):
     mpc.gamma = gamma
     return mpc
 
-
 # ----------------------------------------------------------------------------
 # Episode
 # ----------------------------------------------------------------------------
@@ -376,9 +334,6 @@ def wrap_angle(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
 
 
-<<<<<<< HEAD
-def run_episode(env, mpc, v_kph, seed, kind, loc):
-=======
 def surface_prior_state(env):
     """Measured contact friction enters the tractor and trailer independently."""
     state = env.unwrapped._state
@@ -387,8 +342,7 @@ def surface_prior_state(env):
     return jnp.asarray([*astuple(state)[:8], *friction.dynamics_mu, arc])
 
 
-def run_episode(mpc, v_kph, seed, kind, loc):
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
+def run_episode(env, mpc, v_kph, seed, kind, loc):
     """
     One episode. Returns per-step arrays plus the outcome label. Raises
     KeyboardInterrupt only on a double tap; a single tap aborts the episode
@@ -433,14 +387,14 @@ def run_episode(mpc, v_kph, seed, kind, loc):
         )
     else:
         mpc.reset()
-    if kind in ("model", "prior"):
+    if kind in MODEL_CONFIGS or kind in ("prior", "prior_surface"):
         # MPPI_Jax hardcodes key(0); reset() does not touch it.
         mpc.key = jax.random.key(seed)
 
     env.step(jnp.zeros(2))
 
     # Equal physical warmup; each learned model retains its own history length.
-    history_rows = mpc.history or 1
+    history_rows = getattr(mpc, "history", None) or 1
     history = jnp.zeros(history_rows * ROW_W)
     warm_a = 0.35 if v_target > 0 else -0.35
     for _ in range(WARMUP_STEPS):
@@ -472,22 +426,17 @@ def run_episode(mpc, v_kph, seed, kind, loc):
     try:
         for i in range(MAX_STEPS):
             t0 = time.perf_counter()
-<<<<<<< HEAD
             try:
                 if kind == "ipopt":
                     u, _ = solve_or_use_iterate(mpc, np.asarray(mpc_state()))
                 else:
-                    u = mpc.run_mpc(history if kind == "model" else mpc_state())
+                    u = mpc.run_mpc(history if kind in MODEL_CONFIGS else mpc_state())
+                if kind in MODEL_CONFIGS or kind in ("prior", "prior_surface"):
+                    u.block_until_ready()
             except RuntimeError:
                 solve_ms.append((time.perf_counter() - t0) * 1e3)
                 outcome = "solver_failed"
                 break
-            if kind in ("model", "prior"):
-                u.block_until_ready()
-=======
-            u = mpc.run_mpc(history if kind in MODEL_CONFIGS else mpc_state())
-            u.block_until_ready()
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
             solve_ms.append((time.perf_counter() - t0) * 1e3)
 
             if bool(jnp.any(jnp.isnan(u))):
@@ -498,15 +447,11 @@ def run_episode(mpc, v_kph, seed, kind, loc):
             # command frame is inverted. run_model.py passes u straight through
             # because the learned model was trained on stored BeamNG commands;
             # test_driver.py negates. Do not remove.
-<<<<<<< HEAD
             action = (
                 jnp.clip(jnp.array([-u[0], u[1]]), -1.0, 1.0)
-                if kind in ("prior", "ipopt", "lqr-pid", "mpcc")
+                if kind in ("prior", "ipopt", "lqr-pid", "mpcc", "prior_surface")
                 else u
             )
-=======
-            action = jnp.array([-u[0], u[1]]) if kind in ("prior", "prior_surface") else u
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
 
             env.step(np.array(action))
             iters = i + 1
@@ -734,7 +679,7 @@ def agg_line(a):
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--controllers", nargs="+", choices=[*MODEL_CONFIGS, "prior", "prior_surface"],
+    parser.add_argument("--controllers", nargs="+", choices=[*MODEL_CONFIGS, "prior", "prior_surface", "ipopt", "lqr-pid", "mpcc"],
                         default=CONTROLLERS)
     return parser.parse_args()
 
@@ -780,18 +725,10 @@ def main():
                 "track_width": TRACK_WIDTH,
                 "friction_csv": FRICTION_CSV,
                 "dt": DT,
-<<<<<<< HEAD
-                "headless": HEADLESS,
-                "checkpoint": CKPT_PTH,
-                "norm_stats": JSON_PTH,
-                "data_version": spec.data_version,
-                "H": HISTORY,
-=======
                 "learned_models": learned_config,
                 "prior_friction": {"prior": "track.find_mu",
                                    "prior_surface": "BeamNG measured tractor/trailer contacts"},
                 "warmup_steps": WARMUP_STEPS,
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
                 "fwd_weights": FWD_WEIGHTS,
                 "rev_weights": REV_WEIGHTS,
                 "fwd_mppi": {k: str(v) for k, v in FWD_MPPI.items()},
@@ -842,12 +779,7 @@ def main():
     log()
 
     try:
-<<<<<<< HEAD
-        
-        for kind in CONTROLLERS:
-=======
         for kind in controllers:
->>>>>>> c55d1dc959ae3c426d4322dcba44375cd971bb3b
             for v_kph in VELS_KPH:
                 progress(f"[{kind:<5} v={v_kph:>4} kph]  compiling...")
                 mpc = make_mpc(v_kph, kind)
