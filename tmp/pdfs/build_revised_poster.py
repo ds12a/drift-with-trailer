@@ -6,7 +6,7 @@ from reportlab.lib.colors import HexColor
 from reportlab.platypus import Paragraph
 from reportlab.lib.styles import ParagraphStyle
 from PIL import Image
-root=Path('/home/dshen/Code/drift-with-trailer')
+root=Path(__file__).resolve().parents[2]
 out=root/'output/pdf/iros2026-ppniv-poster-mockup.pdf'
 out.parent.mkdir(parents=True,exist_ok=True)
 for name,file in [('Sans','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf')]:
@@ -37,15 +37,11 @@ def image(path,x,y,w,h,cover=False):
 def bullet(s,x,y,w,size=29):
  rect(x,y+14,9,9,teal);return para(s,x+27,y,w-27,size)+22
 L,C,R=72,1194,2316;cw=1068
-# Page and identity
+# Page and title
 rect(0,0,W,H,white);rect(0,0,W,14,navy)
 txt('IROS 2026  |  16TH PPNIV WORKSHOP',74,25,22,True,teal)
 txt('Learning Dynamics for High-Speed',72,55,83,True,navy)
 txt('Tractor-Trailer Control',72,147,83,True,navy)
-para('Aaron Chen<super>1,*</super>   ·   David Shen<super>1,*</super>   ·   Taekyung Kim<super>2,*</super>   ·   Kaleb Ben Naveed<super>2</super>   ·   Dimitra Panagou<super>2,3</super>',76,273,2780,35,ink)
-txt('1 Electrical Engineering and Computer Science   ·   2 Robotics   ·   3 Aerospace Engineering',76,317,26,False,muted)
-txt('University of Michigan  ·  Ann Arbor, Michigan, USA',76,350,24,False,muted)
-txt('MICHIGAN',2910,82,54,True,navy);txt('ROBOTICS',2913,144,31,True,navy)
 rect(72,383,3312,132,navy)
 txt('Learned dynamics improve predictive control under changing road conditions.',103,409,43,True,white)
 txt('High-speed tractor-trailer driving provides a demanding testbed.',103,465,30,False,'#E6EFF3')
@@ -114,5 +110,4 @@ rect(0,2392,W,200,navy)
 rect(72,2424,11,121,gold)
 txt('Takeaway',108,2412,38,True,gold)
 para('Short-history learned dynamics improve MPPI control across tested conditions; the combined snow-and-slope case remains the hardest.',108,2463,2990,37,white)
-right('* Equal contribution',3382,2551,21,False,'#DCE7EC')
 c.showPage();c.save();print(out)

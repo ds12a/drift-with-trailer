@@ -4,7 +4,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import HexColor
 
-out = Path('/home/dshen/Code/drift-with-trailer/output/pdf/closed-loop-reverse-control.pdf')
+out = Path(__file__).resolve().parents[2] / 'output/pdf/closed-loop-reverse-control.pdf'
 out.parent.mkdir(parents=True, exist_ok=True)
 font_dir = Path('/usr/share/fonts/liberation-sans-fonts')
 pdfmetrics.registerFont(TTFont('Sans', str(font_dir / 'LiberationSans-Regular.ttf')))

@@ -6,7 +6,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image
 from pathlib import Path
-root=Path('/home/dshen/Code/drift-with-trailer')
+root=Path(__file__).resolve().parents[2]
 for name,file in [('Regular','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf')]:
  pdfmetrics.registerFont(TTFont(name,'/usr/share/fonts/liberation-sans-fonts/'+file))
 W,H=3456,2592
@@ -42,8 +42,6 @@ track=crop(6,(130,90,1007,469),'track')
 rect(0,0,W,H,'#FFFFFF');rect(0,0,W,420,navy);rect(72,66,110,12,gold)
 text('Learning Dynamics for High-Speed',72,110,89,'Bold','#FFFFFF')
 text('Tractor-Trailer Control',72,208,89,'Bold','#FFFFFF')
-text('Aaron Chen*  ·  David Shen*  ·  Taekyung Kim*  ·  Kaleb Ben Naveed  ·  Dimitra Panagou',76,325,34,'Regular','#FFFFFF')
-text('UNIVERSITY OF',2770,119,31,'Bold','#FFFFFF');text('MICHIGAN',2770,159,54,'Bold',gold)
 text('48 × 36 IN  /  POSTER MOCKUP',2770,332,23,'Regular','#D5E0E8')
 L,C,R=72,1008,2376;lw,cw,rw=864,1296,1008
 # Left column
@@ -89,6 +87,6 @@ para('<b>Scope:</b> simulation only. Slope and banking were absent from training
 rect(0,2270,W,322,navy);rect(72,2312,12,205,gold)
 text('Learned dynamics improve control under changing road conditions.',112,2310,48,'Bold','#FFFFFF')
 para('Transfer to tested unseen sloped terrain, with reverse-driving limits under combined snow and slope.',112,2380,2770,34,color='#FFFFFF')
-text('* Equal contribution  ·  Figures and numerical results from the manuscript  ·  Layout mockup',112,2510,24,'Regular','#D5E0E8')
+text('Figures and numerical results from the manuscript  ·  Layout mockup',112,2510,24,'Regular','#D5E0E8')
 rect(3020,2310,200,200,'#FFFFFF');text('VIDEO + CODE',3036,2370,22,'Bold');text('QR placeholder',3034,2407,20,'Regular',gray)
 c.showPage();c.save()

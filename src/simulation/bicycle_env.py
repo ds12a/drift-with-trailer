@@ -196,7 +196,7 @@ class BicycleEnv(gym.Env):
         super().__init__()
 
         self.scenario = BicycleEnvConfig(
-            "aach aach aach", TrackConfig(), VehicleConfig(), SimulationConfig()
+            "default", TrackConfig(), VehicleConfig(), SimulationConfig()
         )
         self.track = TrackModel.from_config(self.scenario.track)
         self.dynamics = DynamicBicycleModel(self.scenario)  # TODO

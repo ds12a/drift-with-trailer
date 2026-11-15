@@ -4,7 +4,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-out = Path('/home/dshen/Code/drift-with-trailer/output/figures')
+out = Path(__file__).resolve().parents[2] / 'output/figures'
 out.mkdir(parents=True, exist_ok=True)
 controllers = ['Learned MPPI', 'Fiala-prior MPPI', 'LQR-PID', 'IPOPT MPC', 'MPCC']
 # Completed-run counts from Table II: four environments × three target speeds × nine trials.

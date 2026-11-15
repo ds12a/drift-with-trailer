@@ -1,10 +1,13 @@
 import glob
 import os
 import re
+from pathlib import Path
+
 import numpy as np
 import cv2
 
-files = list(reversed(sorted(glob.glob('/home/dshen/Downloads/snowwpath/*') )))
+downloads = Path.home() / 'Downloads'
+files = sorted(glob.glob(str(downloads / 'snowwpath' / '*')), reverse=True)
 files = files[::2] + [files[-1]] # every other frame, so overlapping trailers have more separation
 frames = [cv2.imread(f, cv2.IMREAD_COLOR).astype(np.float32) for f in files]
 H, W = frames[0].shape[:2]
@@ -84,7 +87,7 @@ for frame in frames:
 # --- Crop away OS chrome (title bar, taskbar); keep in-game viewport only
 composite = composite[40:1540, 0:W]
 
-cv2.imwrite('/home/dshen/Downloads/out.png', np.clip(composite, 0, 255).astype(np.uint8))
+cv2.imwrite(str(downloads / 'out.png'), np.clip(composite, 0, 255).astype(np.uint8))
 
 print("Capture times, for the figure caption:")
 for order, i in enumerate([i for i, c in enumerate(centroids) if c is not None], start=1):

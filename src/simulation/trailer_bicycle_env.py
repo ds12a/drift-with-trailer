@@ -290,7 +290,7 @@ class TrailerBicycleEnv(gym.Env):
 
         if scenario is None:
             scenario = TrailerBicycleEnvConfig(
-                "aach aach aach", TrackConfig(), VehicleConfig(), SimulationConfig()
+                "default", TrackConfig(), VehicleConfig(), SimulationConfig()
             )
 
         self.scenario = scenario

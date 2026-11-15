@@ -3,7 +3,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from pathlib import Path
-out=Path('/home/dshen/Code/drift-with-trailer/tmp/pdfs/completion-poster.png')
+out=Path(__file__).with_name('completion-poster.png')
 labels=['Asphalt','Snow','Slope','Snow + Slope']
 models=['Learned MPPI','Fiala prior','LQR-PID','IPOPT MPC']
 counts=np.array([[27,27,25,19],[20,19,23,15],[20,18,21,15],[14,11,16,13]])

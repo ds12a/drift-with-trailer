@@ -4,7 +4,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-out = Path('/home/dshen/Code/drift-with-trailer/output/figures')
+out = Path(__file__).resolve().parents[2] / 'output/figures'
 out.mkdir(parents=True, exist_ok=True)
 environments = ['Asphalt', 'Snow', 'Slope', 'Snow + Slope']
 controllers = ['Learned MPPI', 'Fiala-prior MPPI', 'LQR-PID', 'IPOPT MPC', 'MPCC']

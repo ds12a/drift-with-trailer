@@ -6,7 +6,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image
 from pathlib import Path
-root=Path('/home/dshen/Code/drift-with-trailer')
+root=Path(__file__).resolve().parents[2]
 for name,file in [('Regular','LiberationSans-Regular.ttf'),('Bold','LiberationSans-Bold.ttf')]:
  pdfmetrics.registerFont(TTFont(name,'/usr/share/fonts/liberation-sans-fonts/'+file))
 W,H=3456,2592
@@ -54,13 +54,10 @@ forward=crop(7,(95,87,533,310),'forward-rollouts')
 photos=[crop(6,box,n) for box,n in [((100,570,313,727),'asphalt'),((323,570,537,727),'snow'),((545,570,759,727),'slope'),((772,570,982,727),'snow-slope')]]
 L,C,R=72,1194,2316;cw=1068
 rect(0,0,W,H,'#FFFFFF')
-# Compact academic title and author block
+# Title block
 rect(72,58,390,12,gold)
-text('UNIVERSITY OF',72,95,30,'Bold',navy);text('MICHIGAN',72,135,53,'Bold',navy)
 center('Learning Dynamics for High-Speed',510,55,2470,79,color=navy)
 center('Tractor-Trailer Control',510,146,2470,79,color=navy)
-center('Aaron Chen*  ·  David Shen*  ·  Taekyung Kim*  ·  Kaleb Ben Naveed  ·  Dimitra Panagou',500,251,2460,33,'Regular')
-center('University of Michigan, Ann Arbor, USA  |  EECS · Robotics · Aerospace Engineering',500,300,2460,29,'Regular',gray)
 c.setStrokeColor(HexColor('#B6C3CC'));c.setLineWidth(2);c.rect(3156,H-270,190,190,fill=0,stroke=1)
 center('VIDEO / CODE',3156,129,190,23);center('QR placeholder',3156,170,190,21,'Regular',gray)
 rect(72,371,3312,6,gold)
@@ -124,6 +121,6 @@ para('Forward-driving rollout examples from the paper: trajectories (top) and hi
 bullets(['Lowest position RMSE in <b>4/4 reverse</b> environments.','Lowest hitch-angle RMSE in <b>4/4 forward</b> environments.','Lowest reported RMSE in <b>13/16 comparisons</b> overall.'],R+12,2236,cw-24,30)
 # small baseline footer
 rect(72,2524,3312,3,'#AEBBC5')
-text('* Equal contribution  |  Simulation study; hardware and payload validation remain future work.',72,2545,25,'Regular',gray)
+text('Simulation study; hardware and payload validation remain future work.',72,2545,25,'Regular',gray)
 text('48 × 36 in · Research poster mockup',2810,2545,25,'Regular',gray)
 c.showPage();c.save()

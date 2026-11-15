@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 
 ROOT = Path(__file__).resolve().parent
-VIDEO = '/home/dshen/Downloads/Screencast from 09-21-2026 02:09:52 PM.webm'
+VIDEO = str(Path.home() / 'Downloads' / 'Screencast from 09-21-2026 02:09:52 PM.webm')
 TIMES = [3, 6, 9, 16, 24, 30, 36]
 FRAME_GLOB = str(ROOT / 'selected' / '*.png')
 OUTPUT_PATH = str(ROOT / 'composite.png')

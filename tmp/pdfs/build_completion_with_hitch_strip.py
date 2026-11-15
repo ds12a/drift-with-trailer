@@ -6,7 +6,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-out = Path('/home/dshen/Code/drift-with-trailer/output/figures')
+out = Path(__file__).resolve().parents[2] / 'output/figures'
 out.mkdir(parents=True, exist_ok=True)
 labels = ['Asphalt', 'Snow', 'Slope', 'Snow + Slope']
 models = ['Learned MPPI', 'Fiala prior', 'LQR-PID', 'IPOPT MPC', 'MPCC']

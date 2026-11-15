@@ -27,19 +27,13 @@ By the end of this task, you should be able to:
 
 ## Reading and References
 
-Start from the MPPI paper in the reading list:
+Start from the MPPI and Smooth MPPI papers in the reading list:
 
 ```text
 docs/reading-list/papers.md
 ```
 
-Use these additional references:
-
-- Smooth MPPI project page: <https://www.taekyung.me/smppi>
-- Smooth MPPI PyTorch reference implementation: <https://github.com/tkkim-robot/smooth-mppi-pytorch>
-- Minimal JAX starter material: <https://github.com/tkkim-robot/minimal-jax-starter>
-
-The Smooth MPPI reference code is guidance, not code to copy blindly. Your implementation should fit this repository's controller interface and experiment structure.
+Your implementation should fit this repository's controller interface and experiment structure.
 
 ## Repository Locations
 

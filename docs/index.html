@@ -4,22 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="History-based learned dynamics for high-speed forward and reverse tractor-trailer control across asphalt, snow, slope, and combined terrain in BeamNG.tech." />
-    <title>Learning Dynamics for High-Speed Tractor-Trailer Control</title>
+    <title>High-Speed Forward and Reverse Tractor-Trailer Driving with Learned Vehicle Dynamics</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main id="top">
       <section class="hero" aria-labelledby="project-title">
         <div class="hero-copy">
-          <h1 id="project-title">Learning Dynamics for <em>High-Speed Tractor–Trailer Control</em></h1>
-          <p class="authors">
-            Aaron Chen<sup>*,1</sup>, David Shen<sup>*,1</sup>, Taekyung Kim<sup>*,2</sup>, Kaleb Ben Naveed<sup>2</sup>, and Dimitra Panagou<sup>2,3</sup>
-          </p>
-          <p class="affiliations">University of Michigan &nbsp;·&nbsp; <sup>*</sup>Equal contribution<br /><sup>1</sup>Electrical Engineering and Computer Science &nbsp;·&nbsp; <sup>2</sup>Robotics &nbsp;·&nbsp; <sup>3</sup>Aerospace Engineering</p>
+          <h1 id="project-title">High-Speed Forward and Reverse Tractor-Trailer Driving with Learned Vehicle Dynamics</h1>
           <p class="focus-line">High-speed reverse driving &nbsp;·&nbsp; Hidden vehicle dynamics &nbsp;·&nbsp; Snow and uneven terrain</p>
           <div class="actions" aria-label="Project links">
-            <a class="button button-primary" href="assets/paper.pdf" target="_blank" rel="noopener"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>Paper</a>
-            <a class="button button-secondary" href="https://github.com/tkkim-robot/drift-with-trailer" target="_blank" rel="noopener"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/></svg>Code</a>
+            <a class="button button-primary" href="https://anonymous.4open.science/w/drift-with-trailer-357C/" target="_blank" rel="noopener"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/></svg>Code</a>
           </div>
           <nav class="section-nav" aria-label="On this page">
             <a href="#method">Method</a>
@@ -137,7 +132,7 @@
             <p>Offline trajectories vary speed and friction, with control noise, weaving, and added runs near handling limits.</p>
           </article>
         </div>
-        <p class="method-note" id="dynamics">For comparison, we use a planar tractor–trailer model with Fiala tire forces. The derivation is in the <a href="assets/paper.pdf#page=2" target="_blank" rel="noopener">paper</a>.</p>
+        <p class="method-note" id="dynamics">For comparison, we use a planar tractor–trailer model with Fiala tire forces.</p>
       </section>
 
       <section class="settings-section" aria-labelledby="settings-title">
@@ -187,7 +182,7 @@
             <a href="assets/completed-runs.jpg" target="_blank" rel="noopener"><img src="assets/completed-runs.jpg" width="2048" height="942" loading="lazy" alt="Completed runs out of 27 for Learned MPPI, Fiala-prior MPPI, LQR-PID, and IPOPT MPC: Asphalt 27,20,20,14; Snow 27,19,18,11; Slope 25,23,21,16; Snow plus slope 19,15,15,13." /></a>
             <figcaption><strong>Completion across all speed targets.</strong> Each environment includes nine trials at −30, −50, and +80 km/h: 27 trials per controller.</figcaption>
           </figure>
-          <p class="result-note">The plots show four of the five controllers; <a href="assets/paper.pdf#page=6" target="_blank" rel="noopener">Table II</a> includes MPCC and the full results. Both MPPI variants complete all 36 forward trials. LQR–PID has lower forward RMS hitch angles, but fewer completions on Asphalt and Snow.</p>
+          <p class="result-note">The plots show four of the five tested controllers. Both MPPI variants complete all 36 forward trials. LQR–PID has lower forward RMS hitch angles, but fewer completions on Asphalt and Snow.</p>
         </section>
         <section class="result-detail" id="prediction" aria-labelledby="prediction-title">
           <h3 id="prediction-title">Dynamics prediction error</h3>
@@ -197,14 +192,14 @@
             <figcaption><strong>Five-second predictions on Snow + Slope.</strong> Forward driving is shown above, reverse below. Dotted black paths are measured trajectories; colored paths are predictions. Blue shading indicates snow.</figcaption>
           </figure>
           <p>Across the eight selected direction–environment segments, learned dynamics achieve the lowest position RMSE in six and the lowest hitch-angle RMSE in seven. Recorded friction information does not consistently close the analytic model’s prediction gap.</p>
-          <p class="result-note">Large late reverse errors remain. This diagnostic horizon exceeds the main controller’s planning horizons of 4.0 seconds forward and 3.25 seconds reverse. See <a href="assets/paper.pdf#page=7" target="_blank" rel="noopener">Table III</a> for all RMSE values.</p>
+          <p class="result-note">Large late reverse errors remain. This diagnostic horizon exceeds the main controller’s planning horizons of 4.0 seconds forward and 3.25 seconds reverse.</p>
         </section>
         <section class="result-detail history-detail" id="history" aria-labelledby="history-title">
           <h3 id="history-title">How much history?</h3>
           <p>On a separate Snow + Slope segment, we compare one, four, and eight steps of history, plus analytic MPPI. Each predictor has three trials per direction, at targets of 30 km/h in reverse and 80 km/h forward.</p>
           <div class="table-scroll" role="region" aria-labelledby="history-table-caption" tabindex="0">
             <table class="results-table history-table">
-              <caption id="history-table-caption">Completed trials out of three · Paper Table IV</caption>
+              <caption id="history-table-caption">Completed trials out of three</caption>
               <thead><tr><th scope="col">Predictor</th><th scope="col">Reverse</th><th scope="col">Forward</th></tr></thead>
               <tbody>
                 <tr><th scope="row">1 step</th><td>0 / 3</td><td>0 / 3</td></tr>
@@ -214,7 +209,7 @@
               </tbody>
             </table>
           </div>
-          <p class="result-note">The eight-step predictor completes all six trials, with a forward mean speed of 64.0 km/h. This comparison uses a different segment and controller tuning from the main experiments. <a href="assets/paper.pdf#page=7" target="_blank" rel="noopener">Full comparison →</a></p>
+          <p class="result-note">The eight-step predictor completes all six trials, with a forward mean speed of 64.0 km/h. This comparison uses a different segment and controller tuning from the main experiments.</p>
         </section>
         <section class="reverse-demos" aria-labelledby="reverse-demos-title">
           <h3 id="reverse-demos-title">Reverse driving across all four environments</h3>
@@ -230,7 +225,7 @@
     </main>
 
     <footer>
-      <p>Learning Dynamics for High-Speed Tractor–Trailer Control</p>
+      <p>High-Speed Forward and Reverse Tractor-Trailer Driving with Learned Vehicle Dynamics</p>
       <a href="#top">Back to top ↑</a>
     </footer>
   </body>

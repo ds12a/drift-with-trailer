@@ -1,9 +1,4 @@
-"""
-Taken from Uncertain Racecar Environment, Taekyung Kim
-https://github.com/tkkim-robot/uncertain-racecar-gym
-
-With modifications to add variable friction patches
-"""
+"""Track geometry adapted from Uncertain Racecar Gym with variable friction patches."""
 
 from __future__ import annotations
 

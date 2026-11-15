@@ -30,7 +30,6 @@ By the end of this task, you should be able to:
 
 Use these references:
 
-- Fiala drift-car JAX dynamics example: <https://github.com/tkkim-robot/plcbf/blob/main/examples/drift_car/dynamics/drift_dynamics_jax.py>
 - PL-CBF paper that explains this dynamics: <https://arxiv.org/pdf/2605.16588v1>
 - Simple acceleration-controlled tractor-trailer reference (note that this only gives an example of a kinematic trailer): <https://github.com/cps-atlas/safe-mpd/blob/main/mbd/robots/acc_tt2d.py>
 - Semitrailer dynamics references in `docs/reading-list/papers.md`

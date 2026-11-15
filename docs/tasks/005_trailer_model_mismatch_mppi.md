@@ -38,7 +38,6 @@ Use these references:
 - Task 4 specification: `docs/tasks/004_fiala_trailer_ice_mppi.md`
 - MPPI and Smooth MPPI papers in `docs/reading-list/papers.md`
 - Simple acceleration-controlled tractor-trailer reference from Task 4: <https://github.com/cps-atlas/safe-mpd/blob/main/mbd/robots/acc_tt2d.py>
-- Smooth MPPI project page: <https://www.taekyung.me/smppi>
 
 Task 5 should build on your Task 4 implementation. Do not reintroduce `uncertain-racecar-gym` as the simulator.
 

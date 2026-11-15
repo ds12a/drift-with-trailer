@@ -4,7 +4,7 @@
 
 Task 1 introduced nonlinear MPC on cartpole. Task 2 introduced MPPI and Smooth MPPI, including JAX implementations. Task 3 moves from cartpole to a racecar environment.
 
-The goal is to add `uncertain-racecar-gym` as a Git submodule, use its nominal Gymnasium racecar environment, and interface our own JAX MPPI and JAX Smooth MPPI controllers with that environment to drive around a track.
+The goal is to initialize the `uncertain-racecar-gym` submodule and use its nominal Gymnasium racecar environment to drive around a track with our JAX MPPI and JAX Smooth MPPI controllers.
 
 For this task, do not use the uncertainty models. Also do not spend time on Blender rendering. Use the normal Gymnasium `reset` / `step` interface and, when you render, use the PyBullet renderer only.
 
@@ -25,25 +25,23 @@ By the end of this task, you should be able to:
 
 Use these references:
 
-- Racecar environment: <https://github.com/tkkim-robot/uncertain-racecar-gym>
+- Racecar environment: the `uncertain-racecar-gym` submodule
 - MPPI paper in `docs/reading-list/papers.md`
 - Smooth MPPI paper in `docs/reading-list/papers.md`
-- Smooth MPPI project page: <https://www.taekyung.me/smppi>
 
 The racecar repository already includes JAX MPPI and Smooth MPPI baselines. You may read those files to understand the environment and cost design, but the controller used in this task should be our own JAX MPPI / Smooth MPPI implementation from this repository, adapted for the racecar.
 
 ## Repository Locations
 
-Add the racecar environment as a submodule at the repository root:
+Initialize the existing racecar environment submodule at the repository root:
 
 ```text
 uncertain-racecar-gym/
 ```
 
-Use these commands:
+Use this command:
 
 ```bash
-git submodule add https://github.com/tkkim-robot/uncertain-racecar-gym.git uncertain-racecar-gym
 git submodule update --init --recursive
 ```
 
@@ -84,7 +82,7 @@ examples/run_racecar_backward_sweep.py
 
 ## Environment Setup Notes
 
-After adding the submodule, install it through `uv` in editable mode:
+After initializing the submodule, install it through `uv` in editable mode:
 
 ```bash
 uv add --editable uncertain-racecar-gym

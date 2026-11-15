@@ -42,11 +42,9 @@ Use these references:
 
 - Task 1 nonlinear MPC cartpole specification: `docs/tasks/001_nonlinear_mpc_cartpole_swingup.md`
 - Task 2 MPPI and Smooth MPPI specification: `docs/tasks/002_mppi_smooth_mppi_cartpole.md`
-- Smooth MPPI PyTorch reference implementation: <https://github.com/tkkim-robot/smooth-mppi-pytorch>
-- Minimal JAX starter material: <https://github.com/tkkim-robot/minimal-jax-starter>
 - MPPI and Smooth MPPI papers in `docs/reading-list/papers.md`
 
-The Smooth MPPI reference is useful because it includes the idea of collecting data, training a neural network dynamics model, and using MPPI for control. Your implementation should fit this repository and should use JAX for the learning/control code in this task.
+Use JAX to collect data, train a neural dynamics model, and use it for MPPI control within this repository.
 
 For the controller, reuse the cartpole setup and MPPI hyperparameters from Task 1 and Task 2 as much as possible. This task is about learned dynamics, so avoid spending most of the effort on controller retuning.
 
