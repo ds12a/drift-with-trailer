@@ -115,7 +115,7 @@
           </div>
         </div>
         <figure class="wide-figure figure-card">
-          <a href="assets/controller-architecture.png" target="_blank" rel="noopener" aria-label="Open the controller architecture diagram at full resolution"><img src="assets/controller-architecture.png" width="2400" height="1100" loading="lazy" alt="MPPI initializes each rollout with four measured observations and three previously applied commands. The learned model predicts the next state given the rollout history and candidate command. MPPI uses rollout costs to update its plan and applies the first command in BeamNG.tech." /></a>
+          <a href="assets/controller-architecture.png" target="_blank" rel="noopener" aria-label="Open the paper’s controller architecture diagram at full resolution"><img src="assets/controller-architecture.png" width="2370" height="723" loading="lazy" alt="MPPI initializes each rollout with four measured observations and three previously applied commands. The learned model predicts the next state given the rollout history and candidate command. MPPI uses rollout costs to update its plan and applies the first command in BeamNG.tech." /></a>
           <figcaption><strong>Controller architecture.</strong> Each rollout starts with four measured observations and three previously applied commands. The predictor takes this history and a candidate command, then advances the rollout. The applied command and next observation update the measured history for replanning.</figcaption>
         </figure>
         <div class="method-grid">
@@ -172,14 +172,7 @@
           <article><h3>Better speed and hitch tracking</h3><p>Both MPPI variants complete all 36 forward trials. Learned MPPI brings mean speed closer to target and lowers RMS hitch angle at every forward and reverse setpoint compared with analytic MPPI.</p></article>
           <article><h3>Unseen terrain</h3><p>Learned MPPI completes 16/18 reverse trials on Slope and 10/18 on Snow + Slope. Snowy slopes remain the hardest setting.</p></article>
         </div>
-        <section class="result-detail" aria-labelledby="closed-loop-title">
-          <h3 id="closed-loop-title">Completed runs by target speed</h3>
-          <figure class="figure-card performance-figure">
-            <a href="assets/closed-loop-by-velocity.png" target="_blank" rel="noopener" aria-label="Open the closed-loop results chart at full resolution"><img src="assets/closed-loop-by-velocity.png" width="2260" height="1748" loading="lazy" alt="Completed runs out of nine for five controllers in four environments, shown separately for −30, −50, and +80 km/h. Learned MPPI completes 9, 9, 8, and 6 reverse trials at −30 km/h and 9, 9, 8, and 4 at −50 km/h, in Asphalt, Snow, Slope, and Snow + Slope order. Both MPPI variants complete all forward trials." /></a>
-            <figcaption>All five controllers are shown for each target. Each bar counts trials that reached 500 control steps out of nine for that controller, speed, and environment.</figcaption>
-          </figure>
-          <p class="result-note">At the 50 km/h reverse target on Asphalt, learned MPPI averages 47.2 km/h and completes all nine trials. Analytic MPPI averages 22.7 km/h and completes six. Mean speeds include unsuccessful trials.</p>
-        </section>
+        <p class="result-note">At the 50 km/h reverse target on Asphalt, learned MPPI averages 47.2 km/h and completes all nine trials. Analytic MPPI averages 22.7 km/h and completes six. Mean speeds include unsuccessful trials.</p>
         <section class="result-detail" id="prediction" aria-labelledby="prediction-title">
           <h3 id="prediction-title">Dynamics prediction error</h3>
           <p>For each five-second segment, all three models start from the same measured state and replay the same recorded commands without resets. We compare the learned model with two analytic variants, one with fixed friction and one given the recorded contact friction.</p>
